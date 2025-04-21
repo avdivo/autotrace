@@ -9,8 +9,9 @@ import settings
 from exceptions import ScreenCaptureError, MemoryError, MonitorError
 
 # Настройка логгирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+logger.setLevel(settings.SCREEN_MONITOR_LOG_LEVEL)  # Используем уровень из настроек
 
 class ScreenMonitor:
     """
@@ -19,6 +20,18 @@ class ScreenMonitor:
     Если новый скриншот существенно отличается от предыдущего, он сохраняется в shared_memory.
     """
     
+    @staticmethod
+    def set_log_level(level):
+        """
+        Устанавливает уровень логирования для модуля.
+        
+        Args:
+            level: Уровень логирования (logging.DEBUG, logging.INFO, logging.WARNING, 
+                  logging.ERROR, logging.CRITICAL)
+        """
+        logger.setLevel(level)
+        return logger.getEffectiveLevel()
+
     def __init__(self, interval=settings.SCREEN_MONITOR_INTERVAL, 
                  monitor_number=settings.SCREEN_MONITOR_NUMBER, 
                  diff_threshold=int(settings.SCREEN_HASH_DIFF_THRESHOLD * 100),  # Конвертируем процентное значение в абсолютное

@@ -1,6 +1,18 @@
 import time
 import os
+import logging
 from typing import Tuple, Dict, Union, Any
+
+# Уровень логирования для модуля screen_monitor
+SCREEN_MONITOR_LOG_LEVEL: int = logging.WARNING
+"""Уровень логирования для модуля screen_monitor (по умолчанию: WARNING).
+Возможные значения:
+- logging.DEBUG - подробная отладочная информация
+- logging.INFO - информационные сообщения о работе
+- logging.WARNING - только предупреждения и ошибки (по умолчанию)
+- logging.ERROR - только ошибки
+- logging.CRITICAL - только критические ошибки
+Для включения информационных логов установите logging.INFO."""
 
 # Путь к папке для хранения скриншотов экрана
 SCREENSHOTS_DIR: str = "screenshots"
@@ -9,6 +21,11 @@ SCREENSHOTS_DIR: str = "screenshots"
 # Путь к папке для хранения образцов изображений
 SAMPLES_DIR: str = "sample"
 """Путь к папке для хранения образцов изображений (по умолчанию: 'sample')."""
+
+# Имя файла для временного хранения команд по умолчанию
+DEFAULT_COMMANDS_FILE: str = "temp_commands.json"
+"""Имя файла для временного хранения команд по умолчанию (по умолчанию: 'temp_commands.json').
+Используется при записи и воспроизведении команд без указания имени файла."""
 
 # Размер области изображения (ширина, высота) для анализа экрана
 SCREEN_AREA_SIZE: Tuple[int, int] = (64, 64)
@@ -103,20 +120,20 @@ PLAYER_TEST_WAIT_TIME: int = 3
 # Множество для хранения использованных идентификаторов
 _used_ids: set = set()
 
-def generate_unique_id() -> int:
-    """Генерирует уникальный идентификатор в виде целого числа на основе текущего времени в секундах.
+def generate_unique_id() -> str:
+    """Генерирует уникальный идентификатор в виде строки на основе текущего времени в секундах.
 
     Использует `int(time.time())` для получения текущей временной метки в секундах. Если идентификатор
     уже использован, увеличивает значение на 1 до получения уникального.
 
     Returns:
-        int: Уникальный идентификатор в виде целого числа.
+        str: Уникальный идентификатор в виде строки.
     """
     candidate_id: int = int(time.time())
     while candidate_id in _used_ids:
         candidate_id += 1
     _used_ids.add(candidate_id)
-    return candidate_id
+    return str(candidate_id)
 
 # Создание директорий для хранения данных, если они не существуют
 for directory in [SCREENSHOTS_DIR, SAMPLES_DIR, CHROMA_PERSIST_DIRECTORY]:

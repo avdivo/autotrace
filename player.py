@@ -131,7 +131,6 @@ class Player:
         - mouse_click_left/right_event_id — клик левой/правой клавишей мыши
         - mouse_dblclick_left_event_id — двойной клик левой клавишей мыши
         - mouse_scroll_x,y_event_id — прокрутка колесика мыши
-        - player_play_name — воспроизвести скрипт с именем name
         
         Параметры:
             command (str): Строка команды для выполнения.
@@ -177,9 +176,6 @@ class Player:
                 sample_data = {'embeddings': [[0.1, 0.2, 0.3]], 'metadatas': [{'screen_id': current_screen_id}]}
                 self._execute_mouse_command(command_action, command, 'test_sample_id', sample_data)
                 return
-            elif command_block == "player" and command_action == "play":
-                self._execute_player_command(command_rest)
-                return
             else:
                 raise InvalidCommandError(f"Неизвестный блок команды: {command_block}")
         
@@ -203,8 +199,6 @@ class Player:
             self._execute_kbd_command(command_action, command)
         elif command_block == "mouse":
             self._execute_mouse_command(command_action, command, sample_id, sample_data)
-        elif command_block == "player" and command_action == "play":
-            self._execute_player_command(command_rest)
         else:
             raise InvalidCommandError(f"Неизвестный блок команды: {command_block}")
     
@@ -335,30 +329,7 @@ class Player:
             self.mouse.position = (x, y)
             time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)  # Используем задержку из настроек
             self.mouse.scroll(dx, dy)
-    
-    def _execute_player_command(self, command_rest: str) -> None:
-        """
-        Выполняет специальные команды плеера.
-        
-        Параметры:
-            command_rest (str): Оставшаяся часть команды после player_play_.
-        """
-        # Формат: player_play_name
-        # Получаем имя скрипта из части после player_play_
-        script_name = command_rest.split('_')[0]
-        
-        if not script_name:
-            raise InvalidCommandError("Некорректный формат команды player_play")
-        
-        # Здесь должен быть вызов функции play из модуля main
-        # Но так как мы не хотим создавать циклические импорты, 
-        # предположим, что эта функция доступна как-то иначе
-        # (например, через механизм инъекции зависимостей)
-        
-        # Для примера просто логируем вызов
-        print(f"Запуск скрипта: {script_name}")
-        # В реальной реализации: main.play(script_name)
-    
+       
     def play_all(self, commands: List[str]) -> None:
         """
         Выполняет список команд последовательно.

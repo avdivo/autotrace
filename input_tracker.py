@@ -17,63 +17,11 @@ from typing import List, Dict, Any, Tuple, Set, Optional, Callable, Union
 from pynput import keyboard, mouse
 from collections import defaultdict
 
-# Проверяем способ запуска - напрямую из командной строки или как модуль проекта
-# При запуске из командной строки __name__ будет '__main__', и мы не будем импортировать проектные модули
-DIRECT_RUN = __name__ == '__main__'
-MOCK_MODE = DIRECT_RUN
+# Импорт из других модулей проекта
+import settings
+from exceptions import KeyboardError, MouseError, InputError
+from images import screen_update, set_sample
 
-# Импорт из других модулей проекта - только если не запускаем напрямую
-if not DIRECT_RUN:
-    try:
-        import settings
-        from exceptions import KeyboardError, MouseError, InputError
-        # Если модуль images существует, используем его
-        try:
-            from images import screen_update, set_sample
-        except ImportError:
-            # Заглушки, если только модуль images отсутствует
-            def screen_update():
-                """Заглушка для функции screen_update модуля images."""
-                return "mock_screen_id"
-            
-            def set_sample(x: int, y: int):
-                """Заглушка для функции set_sample модуля images."""
-                return f"mock_sample_id_{x}_{y}"
-        
-        MOCK_MODE = False
-    except ImportError:
-        MOCK_MODE = True
-
-# Заглушки для внешних модулей - используются, если MOCK_MODE=True
-if MOCK_MODE:
-    # Эти определения будут использоваться при запуске из командной строки или при отсутствии модулей проекта
-    def generate_unique_id() -> int:
-        """Заглушка для функции generate_unique_id из settings."""
-        return int(time.time())
-    
-    def screen_update():
-        """Заглушка для функции screen_update модуля images."""
-        print("[MOCK] Обновление экрана")
-        return "mock_screen_id"
-    
-    def set_sample(x: int, y: int):
-        """Заглушка для функции set_sample модуля images."""
-        print(f"[MOCK] Установка образца по координатам ({x}, {y})")
-        return f"mock_sample_id_{x}_{y}"
-    
-    class KeyboardError(Exception):
-        """Заглушка для исключения KeyboardError."""
-        pass
-    
-    class MouseError(Exception):
-        """Заглушка для исключения MouseError."""
-        pass
-    
-    class InputError(Exception):
-        """Заглушка для исключения InputError."""
-        pass
-
-# Функция для генерации ID события - использует либо settings, либо локальную заглушку
 def get_event_id(prefix=""):
     """
     Генерирует уникальный ID для события.
@@ -84,10 +32,7 @@ def get_event_id(prefix=""):
     Returns:
         str: Уникальный ID события с префиксом.
     """
-    if MOCK_MODE:
-        return f"{prefix}{generate_unique_id()}"
-    else:
-        return f"{prefix}{settings.generate_unique_id()}"
+    return f"{prefix}{settings.generate_unique_id()}"
 
 
 class InputTracker:
@@ -103,8 +48,16 @@ class InputTracker:
     Выход из режима отслеживания осуществляется двойным нажатием клавиши ESC.
     """
     
-    def __init__(self):
-        """Инициализация трекера ввода."""
+    def __init__(self, manager=None):
+        """
+        Инициализация трекера ввода.
+        
+        Параметры:
+            manager: Объект Manager для доступа к компонентам системы
+        """
+        # Сохраняем объект Manager
+        self.manager = manager
+        
         # Флаг выхода из цикла отслеживания
         self.exit_flag = False
         
@@ -287,7 +240,7 @@ class InputTracker:
                     # Прошло достаточно времени после клика, и не было второго клика
                     # Получаем образец изображения для одиночного клика
                     x, y = self.pending_click_position
-                    sample_id = set_sample(x, y)
+                    sample_id = set_sample(self.manager, x, y)
                     
                     # Регистрируем одиночный клик
                     button_type = "left"
@@ -304,10 +257,7 @@ class InputTracker:
             
             return self.commands
         except Exception as e:
-            if MOCK_MODE:
-                raise Exception(f"Ошибка при запуске отслеживания: {str(e)}")
-            else:
-                raise InputError(f"Ошибка при запуске отслеживания: {str(e)}")
+            raise InputError(f"Ошибка при запуске отслеживания: {str(e)}")
         finally:
             self.stop()
     
@@ -332,7 +282,7 @@ class InputTracker:
         """
         try:
             # Обновляем экран перед обработкой события
-            screen_id = screen_update()
+            screen_id = screen_update(self.manager)
             
             # Проверка на двойное нажатие ESC для выхода
             if key == keyboard.Key.esc:
@@ -371,10 +321,7 @@ class InputTracker:
                 self.processed_combo_keys.clear()  # Очищаем множество обработанных клавиш
             
         except Exception as e:
-            if MOCK_MODE:
-                print(f"Ошибка при обработке нажатия клавиши: {str(e)}")
-            else:
-                raise KeyboardError(f"Ошибка при обработке нажатия клавиши: {str(e)}")
+            raise KeyboardError(f"Ошибка при обработке нажатия клавиши: {str(e)}")
     
     def on_key_release(self, key) -> None:
         """
@@ -539,10 +486,7 @@ class InputTracker:
                     self.shift_pressed = False
                 
         except Exception as e:
-            if MOCK_MODE:
-                print(f"Ошибка при обработке отпускания клавиши: {str(e)}")
-            else:
-                raise KeyboardError(f"Ошибка при обработке отпускания клавиши: {str(e)}")
+            raise KeyboardError(f"Ошибка при обработке отпускания клавиши: {str(e)}")
     
     def on_mouse_click(self, x, y, button, pressed) -> None:
         """
@@ -580,7 +524,7 @@ class InputTracker:
                         
                         # Получаем образец изображения только один раз при двойном клике
                         # Экран обновлять не нужно, он уже был обновлен при первом клике
-                        sample_id = set_sample(x, y)
+                        sample_id = set_sample(self.manager, x, y)
                         
                         # Это двойной клик - записываем соответствующую команду
                         event_id = get_event_id("m")
@@ -596,7 +540,7 @@ class InputTracker:
                 
                 # Для первого клика только обновляем экран, но не получаем образец сразу
                 # Образец будет получен либо при двойном клике, либо когда истечет таймаут
-                screen_id = screen_update()
+                screen_id = screen_update(self.manager)
                 
                 # Сохраняем информацию о текущем клике для возможного определения двойного клика
                 self.pending_click = True
@@ -608,10 +552,7 @@ class InputTracker:
                 # Не добавляем команду сразу - отложим до проверки на двойной клик
                 
         except Exception as e:
-            if MOCK_MODE:
-                print(f"Ошибка при обработке клика мыши: {str(e)}")
-            else:
-                raise MouseError(f"Ошибка при обработке клика мыши: {str(e)}")
+            raise MouseError(f"Ошибка при обработке клика мыши: {str(e)}")
     
     def on_mouse_scroll(self, x, y, dx, dy) -> None:
         """
@@ -625,10 +566,10 @@ class InputTracker:
         """
         try:
             # Обновляем экран перед обработкой события
-            screen_id = screen_update()
+            screen_id = screen_update(self.manager)
             
             # Получаем образец изображения в месте прокрутки
-            sample_id = set_sample(x, y)
+            sample_id = set_sample(self.manager, x, y)
             
             # Формируем команду
             command = f"mouse_scroll_{dx},{dy}_{sample_id}"
@@ -636,10 +577,7 @@ class InputTracker:
             print(f"Прокрутка мыши по координатам ({x}, {y}), смещение ({dx}, {dy}): {command}")
             
         except Exception as e:
-            if MOCK_MODE:
-                print(f"Ошибка при обработке прокрутки мыши: {str(e)}")
-            else:
-                raise MouseError(f"Ошибка при обработке прокрутки мыши: {str(e)}")
+            raise MouseError(f"Ошибка при обработке прокрутки мыши: {str(e)}")
     
     def get_key_name(self, key) -> str:
         """
@@ -679,22 +617,38 @@ def main():
     Записывает события ввода и выводит их в терминал.
     """
     try:
-        tracker = InputTracker()
-        commands = tracker.start()
+        from manager import Manager
         
-        print("\nЗаписанные команды:")
-        for i, cmd in enumerate(commands, 1):
-            print(f"{i}. {cmd}")
+        # Инициализируем менеджер
+        manager = Manager()
+        manager.start()
         
-        # Сохраняем результаты в JSON-файл (всегда при запуске из командной строки)
-        if DIRECT_RUN:
-            with open("input_commands.json", "w", encoding="utf-8") as f:
-                json.dump(commands, f, ensure_ascii=False, indent=2)
-            print(f"\nКоманды сохранены в файл 'input_commands.json'")
+        try:
+            # Создаем и запускаем трекер ввода
+            tracker = InputTracker(manager)
+            commands = tracker.start()
             
+            # Выводим список собранных команд
+            print("\nСписок записанных команд:")
+            for i, cmd in enumerate(commands, 1):
+                print(f"{i}. {cmd}")
+                
+            # Сохраняем команды в файл по умолчанию
+            output_file = settings.DEFAULT_COMMANDS_FILE
+            with open(output_file, 'w', encoding='utf-8') as file:
+                json.dump(commands, file, ensure_ascii=False, indent=2)
+            print(f"Команды сохранены в файл: {output_file}")
+            
+        finally:
+            # Останавливаем менеджер
+            manager.stop()
+                   
     except Exception as e:
         print(f"Ошибка при выполнении трекера ввода: {str(e)}")
 
 
-if __name__ == "__main__":
+# Определяем константу для проверки прямого запуска модуля
+DIRECT_RUN = __name__ == "__main__"
+
+if DIRECT_RUN:
     main() 
