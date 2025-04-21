@@ -1,0 +1,326 @@
+import mss
+import cv2
+import numpy as np
+import time
+import multiprocessing
+from multiprocessing import shared_memory
+import logging
+import settings
+from exceptions import ScreenCaptureError, MemoryError, MonitorError
+
+# Настройка логгирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+class ScreenMonitor:
+    """
+    Класс для мониторинга экрана и сохранения скриншотов в shared_memory.
+    Создает отдельный процесс, который делает скриншоты через заданные промежутки времени.
+    Если новый скриншот существенно отличается от предыдущего, он сохраняется в shared_memory.
+    """
+    
+    def __init__(self, interval=settings.SCREEN_MONITOR_INTERVAL, 
+                 monitor_number=settings.SCREEN_MONITOR_NUMBER, 
+                 diff_threshold=int(settings.SCREEN_HASH_DIFF_THRESHOLD * 100),  # Конвертируем процентное значение в абсолютное
+                 shared_memory_name=settings.SCREEN_SHARED_MEMORY_NAME, 
+                 width=settings.SCREEN_RESOLUTION[0], 
+                 height=settings.SCREEN_RESOLUTION[1]):
+        """
+        Инициализация монитора экрана.
+        
+        Args:
+            interval (float): Интервал между скриншотами в секундах
+            monitor_number (int): Номер монитора для захвата
+            diff_threshold (int): Порог различия для определения изменения экрана
+            shared_memory_name (str): Имя области shared memory
+            width (int): Ширина буфера изображения
+            height (int): Высота буфера изображения
+            
+        Raises:
+            ScreenCaptureError: Если указанный монитор не существует
+            MemoryError: Если возникла ошибка при создании shared memory
+        """
+        self.interval = interval
+        self.monitor_number = monitor_number
+        self.diff_threshold = diff_threshold
+        self.shared_memory_name = shared_memory_name
+        self.width = width
+        self.height = height
+        self.process = None
+        self.running = False
+        self.hash_base_img = None
+        
+        # Проверяем существование указанного монитора
+        try:
+            with mss.mss() as sct:
+                if monitor_number >= len(sct.monitors):
+                    raise ScreenCaptureError(f"Монитор с номером {monitor_number} не существует. Доступны мониторы с номерами от 0 до {len(sct.monitors) - 1}")
+                monitor = sct.monitors[monitor_number]
+                logger.info(f"Монитор {monitor_number} доступен: {monitor}")
+        except Exception as e:
+            if isinstance(e, ScreenCaptureError):
+                raise
+            raise ScreenCaptureError(f"Ошибка при проверке монитора: {str(e)}")
+        
+        # Размер SharedMemory для хранения BGRA изображения (4 канала)
+        # Хотя массив будет многомерный (height, width, 4), в shared_memory
+        # он хранится как линейный буфер, но потом может быть представлен
+        # как многомерный np.ndarray с указанием нужной формы
+        self.buffer_shape = (height, width, 4)
+        self.buffer_size = height * width * 4
+        
+        # Создаем shared memory в основном процессе
+        try:
+            # Пытаемся получить существующую shared memory, если она уже создана
+            self.shm = shared_memory.SharedMemory(name=self.shared_memory_name)
+            logger.info(f"Подключились к существующей shared memory '{self.shared_memory_name}'")
+        except FileNotFoundError:
+            # Создаем новую shared memory, если она не существует
+            try:
+                self.shm = shared_memory.SharedMemory(
+                    name=self.shared_memory_name, 
+                    create=True, 
+                    size=self.buffer_size
+                )
+                # Инициализируем пустыми данными (нулями)
+                self.shm.buf[:] = b'\0' * self.buffer_size
+                logger.info(f"Создана новая shared memory '{self.shared_memory_name}' размером {self.buffer_size} байт")
+            except Exception as e:
+                raise MemoryError(f"Ошибка при создании shared memory: {str(e)}")
+        
+    def start(self):
+        """Запускает процесс мониторинга экрана"""
+        if self.running:
+            logger.warning("Монитор экрана уже запущен")
+            return
+            
+        self.running = True
+        try:
+            # Создаем и запускаем процесс для мониторинга экрана
+            self.process = multiprocessing.Process(
+                target=self._monitor_screen_process,
+                args=(self.interval, self.monitor_number, self.diff_threshold, 
+                      self.shared_memory_name, self.buffer_shape, self.buffer_size)
+            )
+            self.process.daemon = True  # Процесс завершится при завершении основной программы
+            self.process.start()
+            logger.info(f"Монитор экрана запущен с PID {self.process.pid}")
+        except Exception as e:
+            self.running = False
+            raise MonitorError(f"Ошибка при запуске процесса мониторинга: {str(e)}")
+        
+    def stop(self):
+        """Останавливает процесс мониторинга экрана и освобождает ресурсы"""
+        if not self.running:
+            logger.warning("Монитор экрана не запущен")
+            return
+            
+        self.running = False
+        # Корректно завершаем процесс
+        if self.process and self.process.is_alive():
+            try:
+                self.process.terminate()
+                self.process.join(timeout=1.0)
+                if self.process.is_alive():
+                    self.process.kill()  # Убиваем процесс если он не завершился
+                logger.info("Монитор экрана остановлен")
+            except Exception as e:
+                logger.error(f"Ошибка при остановке процесса: {e}")
+            
+        self.process = None
+        
+        # Освобождаем shared_memory если она была создана
+        if self.shm is not None:
+            try:
+                self.shm.close()
+                self.shm.unlink()  # Полностью удаляем shared_memory
+                logger.info(f"Shared memory '{self.shared_memory_name}' освобождена")
+            except Exception as e:
+                logger.error(f"Ошибка при освобождении shared memory: {e}")
+            finally:
+                self.shm = None
+    
+    @staticmethod
+    def _monitor_screen_process(interval, monitor_number, diff_threshold, 
+                               shared_memory_name, buffer_shape, buffer_size):
+        """
+        Процесс для мониторинга экрана.
+        
+        Args:
+            interval (float): Интервал между скриншотами
+            monitor_number (int): Номер монитора для захвата
+            diff_threshold (int): Порог различия для определения изменения экрана
+            shared_memory_name (str): Имя области shared memory
+            buffer_shape (tuple): Форма буфера (высота, ширина, каналы)
+            buffer_size (int): Размер буфера в байтах
+        """
+        # Инициализация средства захвата экрана
+        try:
+            sct = mss.mss()
+            monitor = sct.monitors[monitor_number]
+        except Exception as e:
+            logger.error(f"Ошибка при инициализации средства захвата экрана: {e}")
+            raise ScreenCaptureError(f"Ошибка инициализации захвата экрана: {str(e)}")
+            
+        hash_base_img = None  # Хеш предыдущего изображения
+        
+        # Подключаемся к уже созданной в основном процессе shared memory
+        try:
+            # Shared memory должна быть уже создана в основном процессе
+            shm = shared_memory.SharedMemory(name=shared_memory_name)
+            logger.info(f"Процесс мониторинга подключился к shared memory '{shared_memory_name}'")
+        except FileNotFoundError:
+            # Если по каким-то причинам shared memory не создана, создаем её
+            logger.warning(f"Shared memory '{shared_memory_name}' не найдена, создаем новую")
+            try:
+                shm = shared_memory.SharedMemory(
+                    name=shared_memory_name, 
+                    create=True, 
+                    size=buffer_size
+                )
+                # Заполняем нулями - изначально память пуста
+                shm.buf[:] = b'\0' * buffer_size
+            except Exception as e:
+                logger.error(f"Ошибка при создании shared memory: {e}")
+                raise MemoryError(f"Ошибка создания shared memory: {str(e)}")
+        
+        # Создаем numpy массив, который будет ссылаться на shared memory
+        # Важно: хотя массив многомерный (3D), в памяти он хранится линейно
+        shm_array = np.ndarray(shape=buffer_shape, dtype=np.uint8, buffer=shm.buf)
+        
+        logger.info(f"Процесс мониторинга экрана запущен. Монитор: {monitor}, размер буфера: {buffer_shape}")
+        
+        try:
+            while True:
+                start_time = time.time()  # Засекаем время для расчета интервала
+                
+                try:
+                    # Делаем скриншот экрана
+                    scr_img = sct.grab(monitor)
+                    img = np.asarray(scr_img)  # Преобразуем в numpy массив
+                except Exception as e:
+                    logger.error(f"Ошибка при захвате экрана: {e}")
+                    raise ScreenCaptureError(f"Ошибка захвата экрана: {str(e)}")
+                
+                # Изменяем размер, если скриншот не соответствует размеру буфера
+                if img.shape[0] != buffer_shape[0] or img.shape[1] != buffer_shape[1]:
+                    img = cv2.resize(img, (buffer_shape[1], buffer_shape[0]))
+                
+                # Проверяем, что количество каналов совпадает
+                if img.shape[2] != buffer_shape[2]:
+                    # Преобразуем к нужному формату (BGRA)
+                    if img.shape[2] == 3:  # BGR -> BGRA
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+                    elif img.shape[2] > 4:  # Берем только первые 4 канала
+                        img = img[:, :, :4]
+                
+                # Получаем хеш изображения для сравнения
+                hash_img = cv2.img_hash.pHash(img)
+                
+                # Первый скриншот или значительное изменение экрана
+                if hash_base_img is None or (cv2.norm(hash_base_img[0], hash_img[0], cv2.NORM_HAMMING) > diff_threshold):
+                    logger.info("Обнаружено изменение экрана или первый скриншот")
+                    hash_base_img = hash_img  # Сохраняем новый хеш
+                    
+                    # Копируем данные изображения в shared memory через numpy массив
+                    # Это эффективнее, чем копировать по байтам
+                    shm_array[:] = img[:]
+                    logger.info(f"Скриншот сохранен в shared memory. Размер: {img.shape}")
+                
+                # Вычисляем, сколько нужно спать до следующего скриншота
+                elapsed = time.time() - start_time
+                sleep_time = max(0, interval - elapsed)
+                logger.info(f"Время выполнения скриншота: {elapsed} секунд")
+                time.sleep(sleep_time)
+                
+        except KeyboardInterrupt:
+            logger.info("Процесс мониторинга экрана остановлен пользователем")
+        except Exception as e:
+            logger.exception(f"Ошибка в процессе мониторинга экрана: {e}")
+            raise MonitorError(f"Ошибка в процессе мониторинга: {str(e)}")
+        finally:
+            # Освобождаем ресурсы
+            if shm is not None:
+                try:
+                    shm.close()  # Закрываем только доступ к shared memory, не удаляем её
+                except:
+                    pass
+
+    def get_screenshot(self):
+        """
+        Получает последний скриншот из shared memory.
+        
+        Returns:
+            numpy.ndarray or None: Массив изображения или None, если скриншота нет
+            
+        Raises:
+            MemoryError: Если shared memory не инициализирована или возникла ошибка доступа
+        """
+        try:
+            # Проверяем, что shared memory активна
+            if self.shm is None:
+                logger.warning("Shared memory не инициализирована или была закрыта")
+                return None
+            
+            # Создаем numpy массив, который ссылается на данные в shared memory
+            # Преимущество numpy: мы можем представить линейные данные как многомерный массив
+            img = np.ndarray(shape=self.buffer_shape, dtype=np.uint8, buffer=self.shm.buf)
+            
+            # Проверяем, не пустой ли массив (все значения равны 0)
+            if np.all(img == 0):
+                logger.debug("Данные в shared memory пусты")
+                return None
+                
+            # Создаем копию данных, чтобы избежать проблем с доступом к shared memory
+            # после её очистки или закрытия
+            img_copy = img.copy()
+            
+            # Очищаем shared memory после считывания данных
+            self.clear_shared_memory()
+            
+            return img_copy
+        except Exception as e:
+            logger.error(f"Ошибка при получении скриншота: {e}")
+            # Не выбрасываем исключение, просто возвращаем None, чтобы не прерывать работу программы
+            return None
+    
+    def clear_shared_memory(self):
+        """Очищает данные в shared memory, не удаляя саму область памяти"""
+        if self.shm is not None:
+            try:
+                # Заполняем буфер нулями
+                self.shm.buf[:] = b'\0' * self.buffer_size
+                logger.info("Данные в shared memory очищены")
+            except Exception as e:
+                logger.error(f"Ошибка при очистке shared memory: {e}")
+                raise MemoryError(f"Ошибка при очистке shared memory: {str(e)}")
+
+
+# Пример использования:
+if __name__ == "__main__":
+    # Создаем и запускаем монитор экрана
+    # Можно указать нестандартный размер: monitor = ScreenMonitor(width=1280, height=720)
+    monitor = ScreenMonitor(interval=0.5)
+    monitor.start()
+    
+    try:
+        # Основной цикл программы - получение и отображение скриншотов
+        while True:
+            img = monitor.get_screenshot()
+            if img is not None:
+                # Отображаем скриншот
+                cv2.imshow("Screen Monitor", img)
+                # clear_shared_memory уже вызывается внутри get_screenshot()
+            
+            # Выход при нажатии 'q'
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            
+            time.sleep(0.1)  # Небольшая пауза чтобы не нагружать CPU
+            
+    except KeyboardInterrupt:
+        print("Программа остановлена пользователем")
+    finally:
+        # Убедимся, что ресурсы корректно освобождены
+        cv2.destroyAllWindows()
+        monitor.stop() 
