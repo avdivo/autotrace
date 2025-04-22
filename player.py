@@ -24,6 +24,7 @@ from exceptions import (
     InvalidCommandError,
     PlaybackError
 )
+from chroma_db import chroma_db  # Добавляем прямой импорт chroma_db
 
 # Функции-заглушки для режима тестирования
 def mock_screen_update(manager: Any) -> str:
@@ -154,53 +155,74 @@ class Player:
         # Обновляем текущий экран перед выполнением команды
         current_screen_id = screen_update(self.manager)
         
-        # Используем регулярные выражения для извлечения блока и действия команды
-        match = re.match(r'^(\w+)_(\w+)_(.+)$', command)
-        if not match:
+        # Проверяем, что скриншот был успешно инициализирован
+        if current_screen_id is None:
+            print("Предупреждение: Текущий screen_id не инициализирован.")
+            # Попробуем подождать немного и ещё раз получить screen_id
+            time.sleep(1.0)
+            current_screen_id = screen_update(self.manager)
+            if current_screen_id is None:
+                raise ScreenMismatchError("Не удалось получить текущий screen_id. Мониторинг экрана не инициализирован.")
+        
+        # Определяем тип команды и действие
+        command_parts = command.split('_')
+        
+        # Минимум должно быть 3 части: блок_действие_данные
+        if len(command_parts) < 3:
             raise InvalidCommandError(f"Некорректный формат команды: {command}")
+            
+        command_block = command_parts[0]  # kbd или mouse
+        command_action = command_parts[1]  # click, combo, и т.д.
         
-        command_block = match.group(1)
-        command_action = match.group(2)
-        command_rest = match.group(3)  # Оставшаяся часть команды
+        # Обработка команд клавиатуры
+        if command_block == "kbd":
+            # Получаем идентификатор из последней части команды
+            sample_id = command_parts[-1]
+            
+            # Для команд клавиатуры проверяем соответствие id текущему экрану
+            if sample_id != current_screen_id:
+                raise ScreenMismatchError(
+                    f"Текущий экран ({current_screen_id}) не соответствует требуемому ({sample_id})"
+                )
+            self._execute_kbd_command(command_action, command)
+            return
         
-        # Получаем идентификатор (последняя часть команды после последнего подчеркивания)
-        sample_id = command.split('_')[-1]
-        
-        # Специальная обработка для автономного запуска
-        if is_standalone:
-            if command_block == "kbd":
-                self._execute_kbd_command(command_action, command)
-                return
-            elif command_block == "mouse":
+        # Обработка команд мыши    
+        elif command_block == "mouse":
+            # Для команд мыши формат: mouse_action_button_id
+            # Получаем идентификатор из последней части команды
+            sample_id = command_parts[-1]
+            
+            # Специальная обработка для автономного запуска
+            if is_standalone:
                 # Создаем заглушку для sample_data
                 sample_data = {'embeddings': [[0.1, 0.2, 0.3]], 'metadatas': [{'screen_id': current_screen_id}]}
-                self._execute_mouse_command(command_action, command, 'test_sample_id', sample_data)
+                self._execute_mouse_command(command_action, command, sample_id, sample_data)
                 return
-            else:
-                raise InvalidCommandError(f"Неизвестный блок команды: {command_block}")
-        
-        # Получаем документ из базы данных
-        sample_data = self.manager.chroma.get_sample(sample_id)
-        
-        if sample_data is None:
-            raise CommandNotFoundError(f"Команда не найдена в базе данных: {command}")
-        
-        # Проверяем соответствие текущего экрана
-        metadata = sample_data.get('metadatas', [{}])[0]
-        screen_id_from_db = metadata.get('screen_id')
-        
-        if screen_id_from_db != current_screen_id:
-            raise ScreenMismatchError(
-                f"Текущий экран ({current_screen_id}) не соответствует требуемому ({screen_id_from_db})"
-            )
-        
-        # Выполняем команды в зависимости от блока
-        if command_block == "kbd":
-            self._execute_kbd_command(command_action, command)
-        elif command_block == "mouse":
+            
+            # Получаем данные образца из базы
+            sample_data = chroma_db.get_sample(sample_id)
+            
+            if sample_data is None:
+                raise CommandNotFoundError(f"Команда не найдена в базе данных: {command}")
+            
+            # Проверяем метаданные команды мыши
+            metadata = sample_data.get('metadatas', [{}])[0]
+            screen_id_from_db = metadata.get('screen_id')
+            
+            # Если screen_id в базе не задан (None), значит команда мыши применима к любому экрану
+            # В противном случае проверяем соответствие текущего экрана с экраном из базы
+            if screen_id_from_db is not None and screen_id_from_db != current_screen_id:
+                raise ScreenMismatchError(
+                    f"Текущий экран ({current_screen_id}) не соответствует требуемому ({screen_id_from_db})"
+                )
+            
+            # Выполняем команду мыши
             self._execute_mouse_command(command_action, command, sample_id, sample_data)
-        else:
-            raise InvalidCommandError(f"Неизвестный блок команды: {command_block}")
+            return
+        
+        # Если мы дошли до сюда, значит команда неизвестного типа
+        raise InvalidCommandError(f"Неизвестный блок команды: {command_block}")
     
     def _execute_kbd_command(self, action: str, command: str) -> None:
         """
@@ -212,7 +234,8 @@ class Player:
         """
         if action == "click":
             # Используем регулярное выражение для извлечения ключа из скобок
-            match = re.search(r'kbd_click_\(([^)]+)\)_', command)
+            # Учитываем, что после закрывающей скобки могут быть любые символы (включая подчеркивания)
+            match = re.search(r'kbd_click_\(([^)]+)\).*', command)
             if match:
                 key_name = match.group(1)
                 key = self._get_key(key_name)
@@ -226,7 +249,8 @@ class Player:
                 
         elif action == "combo":
             # Используем регулярное выражение для извлечения ключей из скобок
-            match = re.search(r'kbd_combo_\(([^)]+)\)_', command)
+            # Учитываем, что после закрывающей скобки могут быть любые символы
+            match = re.search(r'kbd_combo_\(([^)]+)\).*', command)
             if match:
                 key_names = match.group(1).split()  # Разделяем по пробелам
                 keys = [self._get_key(k) for k in key_names]
@@ -332,20 +356,66 @@ class Player:
        
     def play_all(self, commands: List[str]) -> None:
         """
-        Выполняет список команд последовательно.
-        
-        При возникновении ошибки выводит сообщение об ошибке и продолжает выполнение.
+        Воспроизводит список команд последовательно.
         
         Параметры:
             commands (List[str]): Список команд для выполнения.
+            
+        Вызывает:
+            PlaybackError: Если произошла ошибка при воспроизведении команд.
         """
+        if not commands:
+            print("Список команд пуст")
+            return
+            
+        print(f"Воспроизведение списка из {len(commands)} команд")
+        
+        # Выполняем команды последовательно
         for i, command in enumerate(commands):
             try:
+                print(f"Выполнение команды {i+1}: {command}")
+                
+                # Пауза между командами для стабильности работы
+                if i > 0:
+                    time.sleep(settings.PLAYER_COMMAND_DELAY)
+                    
+                # Проверка структуры команды, чтобы избежать ошибок при разборе
+                if '_' not in command:
+                    raise InvalidCommandError(f"Некорректный формат команды: {command}")
+                    
+                # Получение типа команды для логирования
+                command_type = command.split('_')[0]
+                
+                # Выполнение команды
                 self.play_one(command)
-                # Небольшая задержка между командами для стабильности
-                time.sleep(settings.PLAYER_COMMAND_DELAY)  # Используем задержку из настроек
-            except Exception as e:
+                
+                print(f"Команда {i+1} успешно выполнена")
+                
+            except ScreenMismatchError as e:
+                # Выводим ошибку, но продолжаем выполнение следующих команд
                 print(f"Ошибка при выполнении команды {i+1} ({command}): {str(e)}")
+                # Небольшая пауза перед следующей командой после ошибки
+                time.sleep(1.0)
+                
+            except CommandNotFoundError as e:
+                # Выводим ошибку, но продолжаем выполнение следующих команд
+                print(f"Ошибка при выполнении команды {i+1} ({command}): {str(e)}")
+                # Небольшая пауза перед следующей командой после ошибки
+                time.sleep(1.0)
+                
+            except InvalidCommandError as e:
+                # Выводим ошибку, но продолжаем выполнение следующих команд
+                print(f"Ошибка при выполнении команды {i+1} ({command}): {str(e)}")
+                # Небольшая пауза перед следующей командой после ошибки
+                time.sleep(1.0)
+                
+            except Exception as e:
+                # Выводим ошибку, но продолжаем выполнение следующих команд
+                print(f"Неожиданная ошибка при выполнении команды {i+1} ({command}): {str(e)}")
+                # Небольшая пауза перед следующей командой после ошибки
+                time.sleep(1.0)
+                
+        print(f"Воспроизведение команд завершено")
 
 
 # Заглушка для менеджера при автономном запуске
@@ -357,17 +427,7 @@ class MockManager:
         self.is_standalone = True
         self.screen_id = 'test_screen_id'
         self.screenshot = None
-        
-        # Заглушка для chroma
-        class MockChroma:
-            def get_sample(self, sample_id):
-                return {
-                    'ids': [sample_id],
-                    'embeddings': [[0.1, 0.2, 0.3]],
-                    'metadatas': [{'screen_id': 'test_screen_id'}]
-                }
-        
-        self.chroma = MockChroma()
+        # Нет необходимости в создании MockChroma, так как теперь используется прямой доступ к chroma_db
 
 
 # Код для автономного запуска модуля
@@ -390,18 +450,18 @@ if __name__ == "__main__":
             print(f"{i}...")
             time.sleep(1)
         
-        # Генерируем уникальные идентификаторы для команд
-        command_ids = [f"test_{i}" for i in range(1, 8)]
+        # Используем текущий screen_id для всех команд клавиатуры
+        screen_id = 'test_screen_id'  # ID экрана в тестовом режиме
         
         # Формируем команды для ввода слова "Привет" с использованием правильного формата
         commands = [
             # Для заглавной буквы П - комбинация Shift+п
-            f"kbd_combo_(shift п)_{command_ids[0]}",
-            f"kbd_click_(р)_{command_ids[1]}",
-            f"kbd_click_(и)_{command_ids[2]}",
-            f"kbd_click_(в)_{command_ids[3]}",
-            f"kbd_click_(е)_{command_ids[4]}",
-            f"kbd_click_(т)_{command_ids[5]}",
+            f"kbd_combo_(shift п)_{screen_id}",
+            f"kbd_click_(р)_{screen_id}",
+            f"kbd_click_(и)_{screen_id}",
+            f"kbd_click_(в)_{screen_id}",
+            f"kbd_click_(е)_{screen_id}",
+            f"kbd_click_(т)_{screen_id}",
         ]
         
         print(f"Выполнение команд для набора слова 'Привет'...")

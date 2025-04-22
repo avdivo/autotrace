@@ -171,8 +171,35 @@ def get_xy(manager: Manager, sample_id: str, vector: np.ndarray) -> Tuple[int, i
     # Загружаем изображение образца
     sample_image = cv2.imread(sample_path)
     
-    # Находим все вхождения образца на текущем скриншоте
-    result = cv2.matchTemplate(manager.screenshot, sample_image, cv2.TM_CCOEFF_NORMED)
+    if sample_image is None:
+        raise FileNotFoundError(f"Не удалось загрузить файл образца {sample_path}")
+    
+    # Приводим изображения к одному формату (BGR или BGRA)
+    screenshot = manager.screenshot.copy()
+    
+    # Проверяем и приводим цветовые каналы к одному формату
+    if len(screenshot.shape) == 3 and screenshot.shape[2] == 4:
+        # Скриншот в формате BGRA (4 канала) -> BGR (3 канала)
+        screenshot = screenshot[:, :, :3]
+    
+    if len(sample_image.shape) == 3 and sample_image.shape[2] == 4:
+        # Образец в формате BGRA (4 канала) -> BGR (3 канала)
+        sample_image = sample_image[:, :, :3]
+    
+    # Проверяем и приводим типы данных к одному формату
+    if screenshot.dtype != sample_image.dtype:
+        # Приводим к общему типу данных
+        sample_image = sample_image.astype(np.uint8)
+        screenshot = screenshot.astype(np.uint8)
+    
+    try:
+        # Находим все вхождения образца на текущем скриншоте
+        result = cv2.matchTemplate(screenshot, sample_image, cv2.TM_CCOEFF_NORMED)
+    except cv2.error as e:
+        # Более информативное сообщение об ошибке
+        raise ValueError(f"Ошибка при сопоставлении шаблонов: {str(e)}. " + 
+                        f"Скриншот: {screenshot.shape}, {screenshot.dtype}. " + 
+                        f"Образец: {sample_image.shape}, {sample_image.dtype}")
     
     # Получаем порог сходства из настроек
     threshold = settings.OPENCV_MATCH_THRESHOLD
@@ -196,7 +223,7 @@ def get_xy(manager: Manager, sample_id: str, vector: np.ndarray) -> Tuple[int, i
             h, w = sample_image.shape[:2]
             
             # Извлекаем область текущего совпадения
-            match_image = manager.screenshot[y:y+h, x:x+w]
+            match_image = screenshot[y:y+h, x:x+w]
             
             # Получаем векторное представление совпадения
             try:

@@ -14,6 +14,7 @@ import sys
 import json
 import argparse
 from typing import List, Dict, Optional, Union, Any
+import time
 
 from manager import Manager
 from player import Player
@@ -41,18 +42,17 @@ def run(command: str) -> None:
     if not command:
         raise InvalidCommandError("Пустая команда")
     
-    parts = command.strip().split('_')
-    if not parts:
-        raise InvalidCommandError(f"Некорректный формат команды: {command}")
-    
-    action = parts[0].lower()
+    # Определяем тип команды по первой части (до первого подчеркивания)
+    action = command.split('_')[0].lower()
     
     if action == "play":
         # Выполнение скрипта команд
+        parts = command.strip().split('_')
         filename = parts[1] if len(parts) > 1 else None
         play(filename)
     elif action == "record":
         # Запись скрипта команд
+        parts = command.strip().split('_')
         filename = parts[1] if len(parts) > 1 else None
         record(filename)
     elif action in ["kbd", "mouse"]:
@@ -101,6 +101,31 @@ def play(filename: Optional[str] = None) -> None:
     manager = Manager()
     try:
         manager.start()
+        
+        # Активное ожидание инициализации скриншота
+        print("Ожидание инициализации мониторинга экрана...")
+        max_wait_time = 5.0  # Максимальное время ожидания в секундах
+        wait_interval = 0.5  # Интервал проверки в секундах
+        start_time = time.time()
+        
+        # Импортируем функцию screen_update из модуля images
+        from images import screen_update
+        
+        # Ждем, пока не получим скриншот или не истечет время ожидания
+        while time.time() - start_time < max_wait_time:
+            # Пытаемся получить screen_id
+            current_screen_id = screen_update(manager)
+            
+            # Если получили screen_id, значит скриншот инициализирован
+            if current_screen_id is not None:
+                print(f"Мониторинг экрана инициализирован. Текущий screen_id: {current_screen_id}")
+                break
+                
+            # Небольшая пауза перед следующей попыткой
+            time.sleep(wait_interval)
+        else:
+            print("Предупреждение: Не удалось дождаться инициализации скриншота.")
+            
         player_instance = Player(manager)
         player_instance.play_all(commands)
     finally:
@@ -168,13 +193,56 @@ def cli_main() -> None:
     # Получаем полную команду из аргументов
     full_command = args.command
     if args.params:
-        full_command += "_" + "_".join(args.params)
+        # Проверяем, если первый аргумент - "kbd_click" или "kbd_combo", 
+        # то не разделяем на параметры, а собираем все вместе
+        if full_command in ["kbd_click", "kbd_combo"]:
+            # Восстанавливаем полную команду с учетом скобок и правильных разделителей
+            # например kbd_click (1) 1745353023 -> kbd_click_(1)_1745353023
+            key = args.params[0]
+            screen_id = args.params[-1]
+            
+            # Проверяем, содержит ли key уже скобки
+            if not (key.startswith('(') and key.endswith(')')):
+                key = f"({key})"
+                
+            full_command = f"{full_command}_{key}_{screen_id}"
+            
+            print(f"Собранная команда: {full_command}")
+        else:
+            # Обычная обработка для других команд
+            full_command += "_" + "_".join(args.params)
     
     manager = Manager()
     
     try:
         # Запускаем Manager
         manager.start()
+        
+        # Добавляем активное ожидание инициализации скриншота для всех команд
+        # кроме play и record, которые имеют собственную логику ожидания
+        if not full_command.startswith(('play', 'record')):
+            print("Ожидание инициализации мониторинга экрана...")
+            max_wait_time = 5.0  # Максимальное время ожидания в секундах
+            wait_interval = 0.5  # Интервал проверки в секундах
+            start_time = time.time()
+            
+            # Импортируем функцию screen_update из модуля images
+            from images import screen_update
+            
+            # Ждем, пока не получим скриншот или не истечет время ожидания
+            while time.time() - start_time < max_wait_time:
+                # Пытаемся получить screen_id
+                current_screen_id = screen_update(manager)
+                
+                # Если получили screen_id, значит скриншот инициализирован
+                if current_screen_id is not None:
+                    print(f"Мониторинг экрана инициализирован. Текущий screen_id: {current_screen_id}")
+                    break
+                    
+                # Небольшая пауза перед следующей попыткой
+                time.sleep(wait_interval)
+            else:
+                print("Предупреждение: Не удалось дождаться инициализации скриншота.")
         
         # Выполняем команду
         if full_command:
