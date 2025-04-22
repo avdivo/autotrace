@@ -33,6 +33,7 @@ class Manager:
         screen_id (Optional[str]): Идентификатор текущего экрана.
         screenshot (Optional[np.ndarray]): Изображение экрана в формате numpy.
         monitor (ScreenMonitor): Объект класса ScreenMonitor для отслеживания экрана.
+        chroma: Объект для работы с векторной базой данных ChromaDB.
     """
     
     def __init__(self) -> None:
@@ -44,6 +45,7 @@ class Manager:
         self.screen_id: Optional[str] = None
         self.screenshot: Optional[np.ndarray] = None
         self.monitor: ScreenMonitor = ScreenMonitor()
+        self.chroma = chroma  # Добавляем ссылку на глобальный экземпляр chroma_db
         self._is_running: bool = False
         logger.info("Manager инициализирован")
     

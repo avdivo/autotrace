@@ -22,18 +22,6 @@ import settings
 from exceptions import KeyboardError, MouseError, InputError
 from images import screen_update, set_sample
 
-def get_event_id(prefix=""):
-    """
-    Генерирует уникальный ID для события.
-    
-    Args:
-        prefix (str): Префикс для ID события.
-    
-    Returns:
-        str: Уникальный ID события с префиксом.
-    """
-    return f"{prefix}{settings.generate_unique_id()}"
-
 
 class InputTracker:
     """
@@ -229,8 +217,7 @@ class InputTracker:
                 if self.pending_esc and (time.time() - self.pending_esc_time >= self.esc_timeout):
                     # Прошло достаточно времени после нажатия ESC, и не было второго нажатия
                     # Регистрируем одиночный ESC
-                    event_id = get_event_id("k")
-                    command = f"kbd_click_(esc)_{event_id}"
+                    command = f"kbd_click_(esc)_{self.manager.screen_id}"
                     self.commands.append(command)
                     print(f"Нажатие клавиши: {command}")
                     self.pending_esc = False
@@ -416,8 +403,7 @@ class InputTracker:
                         
                         # Формируем команду
                         combo_str = " ".join(combo_keys_names).strip()
-                        event_id = get_event_id("k")
-                        command = f"kbd_combo_({combo_str})_{event_id}"
+                        command = f"kbd_combo_({combo_str})_{self.manager.screen_id}"
                         self.commands.append(command)
                         print(f"Комбинация клавиш: {command}")
                         
@@ -433,8 +419,7 @@ class InputTracker:
                                       keyboard.Key.esc)):  # Исключаем ESC
                             key_name = self.get_key_name(key)
                             if key_name and key_name.strip():
-                                event_id = get_event_id("k")
-                                command = f"kbd_click_({key_name})_{event_id}"
+                                command = f"kbd_click_({key_name})_{self.manager.screen_id}"
                                 self.commands.append(command)
                                 print(f"Нажатие клавиши: {command}")
                 else:
@@ -445,8 +430,7 @@ class InputTracker:
                                   keyboard.Key.esc)):  # Исключаем ESC
                         key_name = self.get_key_name(key)
                         if key_name and key_name.strip():
-                            event_id = get_event_id("k")
-                            command = f"kbd_click_({key_name})_{event_id}"
+                            command = f"kbd_click_({key_name})_{self.manager.screen_id}"
                             self.commands.append(command)
                             print(f"Нажатие клавиши: {command}")
                 
@@ -472,8 +456,7 @@ class InputTracker:
                     key_name = self.get_key_name(key)
                     # Проверяем, что имя клавиши не пустое
                     if key_name and key_name.strip():
-                        event_id = get_event_id("k")
-                        command = f"kbd_click_({key_name})_{event_id}"
+                        command = f"kbd_click_({key_name})_{self.manager.screen_id}"
                         self.commands.append(command)
                         print(f"Нажатие клавиши: {command}")
                 
@@ -527,7 +510,7 @@ class InputTracker:
                         sample_id = set_sample(self.manager, x, y)
                         
                         # Это двойной клик - записываем соответствующую команду
-                        event_id = get_event_id("m")
+                        event_id = settings.generate_unique_id()
                         command = f"mouse_dblclick_{button_type}_{sample_id}"
                         self.commands.append(command)
                         print(f"Двойной клик мыши ({button_type}) по координатам ({x}, {y}): {command}")
