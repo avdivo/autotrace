@@ -1,0 +1,19 @@
+/.cursor
+/venv/
+/.gitignore
+
+# Игнорировать кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Игнорировать базу данных Chroma
+/chroma_db/
+
+# Игнорировать скриншоты
+/screenshots/
+
+# Игнорировать временные файлы
+/sample/
+/output.txt
+/temp_commands.json
