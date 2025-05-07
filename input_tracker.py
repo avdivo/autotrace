@@ -228,7 +228,7 @@ class InputTracker:
                     # Получаем образец изображения для одиночного клика
                     x, y = self.pending_click_position
                     sample_id = set_sample(self.manager, x, y)
-                    
+
                     # Регистрируем одиночный клик
                     button_type = "left"
                     if self.pending_click_button == mouse.Button.right:

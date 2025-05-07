@@ -8,14 +8,14 @@
 
 import os
 import cv2
-import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 
 import settings
-from ml_model import model
 from chroma_db import chroma_db
 from manager import Manager
-from exceptions import ScreenCaptureError, EmbeddingError
+from exceptions import ScreenCaptureError, ElementNotFoundError
+from hash_function import compute_dhash_vector, dhash_vector_to_hex
+from ui_detector import UIRegions
 
 
 def screen_update(manager: Manager) -> str:
@@ -51,19 +51,16 @@ def screen_update(manager: Manager) -> str:
     # Извлекаем область верхнего левого угла (или другую, заданную в настройках)
     screen_area = screenshot[area_y:area_y+area_size[1], area_x:area_x+area_size[0]]
     
-    # Получаем векторное представление выбранного участка
-    try:
-        vector = model.get_embedding(screen_area)
-    except Exception as e:
-        raise EmbeddingError(f"Ошибка при получении эмбеддинга экрана: {e}")
-    
+    # Получаем dHash выбранного участка виде вектора
+    embedding = [float(bit) for bit in compute_dhash_vector(screen_area)]
+
     # Проверяем наличие screen_id по вектору
-    screen_id = chroma_db.get_screen_id(vector)
+    screen_id = chroma_db.get_screen_id(embedding)
     
     # Если screen_id не найден, создаем новый
     if screen_id is None:
         screen_id = settings.generate_unique_id()
-        chroma_db.create_screen(screen_id, vector)
+        chroma_db.create_screen(screen_id, embedding)
         
     # Сохраняем полный скриншот в папке screenshots
     screenshots_folder = settings.SCREENSHOTS_DIR
@@ -95,58 +92,38 @@ def set_sample(manager: Manager, x: int, y: int) -> str:
     # Проверяем наличие скриншота
     if manager.screenshot is None:
         raise ScreenCaptureError("Текущий скриншот недоступен")
-    
-    # Получаем размер образца из настроек
-    sample_size = settings.SAMPLE_AREA_SIZE
-    
-    # Вычисляем координаты для извлечения образца
-    half_size_x, half_size_y = sample_size[0] // 2, sample_size[1] // 2
-    x1 = max(0, x - half_size_x)
-    y1 = max(0, y - half_size_y)
-    x2 = min(manager.screenshot.shape[1], x + half_size_x)
-    y2 = min(manager.screenshot.shape[0], y + half_size_y)
-    
-    # Извлекаем сегмент изображения
-    sample_image = manager.screenshot[y1:y2, x1:x2]
-    
-    # Если размер извлеченного образца не соответствует требуемому, изменяем его
-    if sample_image.shape[0] != sample_size[1] or sample_image.shape[1] != sample_size[0]:
-        sample_image = cv2.resize(sample_image, sample_size)
-    
-    # Получаем векторное представление образца
-    try:
-        vector = model.get_embedding(sample_image)
-    except Exception as e:
-        raise EmbeddingError(f"Ошибка при получении эмбеддинга образца: {e}")
-    
+
+    ui_regions = UIRegions(manager.screenshot)  # Создаем объект с регионами
+    region = ui_regions.process_click(x, y)  # Поиск региона содержащего элемент, по которому был клик
+    hash_region = dhash_vector_to_hex(region.dhash)  # Получаем шестнадцатиричный хэш
+    extended_region = ui_regions.merge_nearby_boxes(region, 30)  # Поиск расширенного региона (со стоящими рядом)
+    hash_extended_region = dhash_vector_to_hex(extended_region.dhash)  # Получаем шестнадцатиричный хэш
+
     # Создаем метаданные с текущим screen_id
-    metadata = {'screen_id': manager.screen_id}
+    metadata = {'screen_id': manager.screen_id,
+                'hash_region': hash_region,
+                'hash_extended_region': hash_extended_region}
+
+    sample_id = settings.generate_unique_id()
+    chroma_db.create_sample(sample_id, metadata)
     
-    # Проверяем наличие sample_id по вектору и метаданным
-    sample_id = chroma_db.get_sample_id(vector, metadata)
-    
-    # Если sample_id не найден, создаем новый
-    if sample_id is None:
-        sample_id = settings.generate_unique_id()
-        chroma_db.create_sample(sample_id, vector, metadata)
-    
-    # Сохраняем образец в папке sample
-    samples_folder = settings.SAMPLES_DIR
-    os.makedirs(samples_folder, exist_ok=True)
-    sample_path = os.path.join(samples_folder, f"{sample_id}.png")
-    cv2.imwrite(sample_path, sample_image)
+    # # Сохраняем образец в папке sample
+    # samples_folder = settings.SAMPLES_DIR
+    # os.makedirs(samples_folder, exist_ok=True)
+    # sample_path = os.path.join(samples_folder, f"{sample_id}.png")
+    # cv2.imwrite(sample_path, sample_image)
     
     return sample_id
 
 
-def get_xy(manager: Manager, sample_id: str, vector: np.ndarray) -> Tuple[int, int]:
+def get_xy(manager: Manager, metadata: Dict) -> Tuple[int, int]:
     """
     Находит координаты на экране, где расположено изображение с указанным sample_id.
     
     Args:
         manager: Объект Manager для доступа к компонентам системы
         sample_id: Идентификатор образца
-        vector: Векторное представление образца
+        metadata: Векторное представление образца
         
     Returns:
         Tuple[int, int]: Координаты (x, y) найденного образца
@@ -159,97 +136,28 @@ def get_xy(manager: Manager, sample_id: str, vector: np.ndarray) -> Tuple[int, i
     # Проверяем наличие скриншота
     if manager.screenshot is None:
         raise ScreenCaptureError("Текущий скриншот недоступен")
-    
-    # Формируем путь к файлу образца
-    samples_folder = settings.SAMPLES_DIR
-    sample_path = os.path.join(samples_folder, f"{sample_id}.png")
-    
-    # Проверяем существование файла образца
-    if not os.path.exists(sample_path):
-        raise FileNotFoundError(f"Файл образца {sample_path} не найден")
-    
-    # Загружаем изображение образца
-    sample_image = cv2.imread(sample_path)
-    
-    if sample_image is None:
-        raise FileNotFoundError(f"Не удалось загрузить файл образца {sample_path}")
-    
-    # Приводим изображения к одному формату (BGR или BGRA)
-    screenshot = manager.screenshot.copy()
-    
-    # Проверяем и приводим цветовые каналы к одному формату
-    if len(screenshot.shape) == 3 and screenshot.shape[2] == 4:
-        # Скриншот в формате BGRA (4 канала) -> BGR (3 канала)
-        screenshot = screenshot[:, :, :3]
-    
-    if len(sample_image.shape) == 3 and sample_image.shape[2] == 4:
-        # Образец в формате BGRA (4 канала) -> BGR (3 канала)
-        sample_image = sample_image[:, :, :3]
-    
-    # Проверяем и приводим типы данных к одному формату
-    if screenshot.dtype != sample_image.dtype:
-        # Приводим к общему типу данных
-        sample_image = sample_image.astype(np.uint8)
-        screenshot = screenshot.astype(np.uint8)
-    
-    try:
-        # Находим все вхождения образца на текущем скриншоте
-        result = cv2.matchTemplate(screenshot, sample_image, cv2.TM_CCOEFF_NORMED)
-    except cv2.error as e:
-        # Более информативное сообщение об ошибке
-        raise ValueError(f"Ошибка при сопоставлении шаблонов: {str(e)}. " + 
-                        f"Скриншот: {screenshot.shape}, {screenshot.dtype}. " + 
-                        f"Образец: {sample_image.shape}, {sample_image.dtype}")
-    
-    # Получаем порог сходства из настроек
-    threshold = settings.OPENCV_MATCH_THRESHOLD
-    
-    # Находим координаты, где значение результата превышает порог
-    locations = np.where(result >= threshold)
-    
-    # Если образец не найден, возвращаем ошибку
-    if len(locations[0]) == 0:
-        raise ValueError(f"Образец {sample_id} не найден на текущем экране")
-    
-    # Если найдено несколько совпадений, выбираем наиболее похожее с помощью векторного сравнения
-    if len(locations[0]) > 1:
-        best_match_index = 0
-        best_similarity = -1
-        
-        for i in range(len(locations[0])):
-            y, x = locations[0][i], locations[1][i]
-            
-            # Получаем размеры образца
-            h, w = sample_image.shape[:2]
-            
-            # Извлекаем область текущего совпадения
-            match_image = screenshot[y:y+h, x:x+w]
-            
-            # Получаем векторное представление совпадения
-            try:
-                match_vector = model.get_embedding(match_image)
-            except Exception:
-                # Если не удалось получить вектор, пропускаем это совпадение
-                continue
-            
-            # Вычисляем косинусное сходство между векторами
-            similarity = np.dot(vector, match_vector) / (np.linalg.norm(vector) * np.linalg.norm(match_vector))
-            
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match_index = i
-        
-        # Используем координаты лучшего совпадения
-        min_y, min_x = locations[0][best_match_index], locations[1][best_match_index]
-    else:
-        # Если найдено только одно совпадение, используем его координаты
-        min_y, min_x = locations[0][0], locations[1][0]
-    
-    # Получаем размеры образца
-    h, w = sample_image.shape[:2]
-    
+
+    ui_regions = UIRegions(manager.screenshot)  # Создаем объект с регионами
+
+    # Извлечение хэшей
+    hash_region = metadata['hash_region']
+    hash_extended_region = metadata['hash_extended_region']
+
+    best_regions = ui_regions.find_best_matching_regions(hash_region)  # Поиск регионов подходящих на образец (по хэшу)
+
+    if len(best_regions) > 1:
+        # Если найдено несколько похожих регионов, нужно использовать контекст
+        # Второй хэш учитывает рядом стоящие элементы
+        region = ui_regions.find_by_extended_regions(best_regions, hash_extended_region)  # Ищем среди регионов лучший
+        best_regions = [region] if region else []
+
+    if not best_regions:
+        raise ElementNotFoundError("Элемент на экране не найден")
+
+    x, y, w, h = best_regions[0].box
+
     # Вычисляем центр найденного образца
-    center_x = min_x + w // 2
-    center_y = min_y + h // 2
+    center_x = x + w // 2
+    center_y = y + h // 2
     
-    return center_x, center_y 
+    return center_x, center_y

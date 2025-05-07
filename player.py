@@ -15,6 +15,7 @@ import re
 from typing import List, Optional, Dict, Any, Union
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
+import pyautogui  # Добавляем импорт PyAutoGUI
 
 # Импорт из других модулей проекта
 import settings
@@ -196,7 +197,7 @@ class Player:
             # Специальная обработка для автономного запуска
             if is_standalone:
                 # Создаем заглушку для sample_data
-                sample_data = {'embeddings': [[0.1, 0.2, 0.3]], 'metadatas': [{'screen_id': current_screen_id}]}
+                sample_data = {'embedding': [0.1, 0.2, 0.3], 'metadata': {'screen_id': current_screen_id}}
                 self._execute_mouse_command(command_action, command, sample_id, sample_data)
                 return
             
@@ -207,9 +208,9 @@ class Player:
                 raise CommandNotFoundError(f"Команда не найдена в базе данных: {command}")
             
             # Проверяем метаданные команды мыши
-            metadata = sample_data.get('metadatas', [{}])[0]
+            metadata = sample_data.get('metadata', {})
             screen_id_from_db = metadata.get('screen_id')
-            
+
             # Если screen_id в базе не задан (None), значит команда мыши применима к любому экрану
             # В противном случае проверяем соответствие текущего экрана с экраном из базы
             if screen_id_from_db is not None and screen_id_from_db != current_screen_id:
@@ -218,7 +219,7 @@ class Player:
                 )
             
             # Выполняем команду мыши
-            self._execute_mouse_command(command_action, command, sample_id, sample_data)
+            self._execute_mouse_command(command_action, command, metadata)
             return
         
         # Если мы дошли до сюда, значит команда неизвестного типа
@@ -267,16 +268,14 @@ class Player:
             else:
                 raise InvalidCommandError(f"Некорректный формат команды kbd_combo: {command}")
     
-    def _execute_mouse_command(self, action: str, command: str, sample_id: str, 
-                              sample_data: Dict[str, Any]) -> None:
+    def _execute_mouse_command(self, action: str, command: str, metadata: Dict[str, Any]) -> None:
         """
         Выполняет команды мыши.
         
         Параметры:
             action (str): Действие мыши (click, dblclick, scroll).
             command (str): Полная строка команды.
-            sample_id (str): Идентификатор образца.
-            sample_data (Dict[str, Any]): Данные образца.
+            metadata (Dict[str, Any]): Данные образца.
         """
         # Определяем функцию в зависимости от режима работы
         is_standalone = hasattr(self.manager, 'is_standalone') and self.manager.is_standalone
@@ -299,12 +298,15 @@ class Player:
                 raise InvalidCommandError(f"Некорректная кнопка мыши: {button_str}")
             
             # Определяем координаты для клика
-            vector = sample_data.get('embeddings', [[]])[0]
-            x, y = get_xy(self.manager, sample_id, vector)
+            x, y = get_xy(self.manager, metadata)
             
-            # Перемещаем мышь и выполняем клик
-            self.mouse.position = (x, y)
-            time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)  # Используем задержку из настроек
+            # Плавно перемещаем мышь с помощью PyAutoGUI
+            pyautogui.moveTo(x, y, duration=settings.PLAYER_MOUSE_MOVE_DURATION)
+            
+            # Небольшая задержка перед кликом
+            time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)
+            
+            # Выполняем клик
             self.mouse.click(button)
             
         elif action == "dblclick":
@@ -320,12 +322,15 @@ class Player:
                 raise InvalidCommandError(f"Некорректная кнопка мыши: {button_str}")
             
             # Определяем координаты для клика
-            vector = sample_data.get('embeddings', [[]])[0]
-            x, y = get_xy(self.manager, sample_id, vector)
+            x, y = get_xy(self.manager, metadata)
             
-            # Перемещаем мышь и выполняем двойной клик
-            self.mouse.position = (x, y)
-            time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)  # Используем задержку из настроек
+            # Плавно перемещаем мышь с помощью PyAutoGUI
+            pyautogui.moveTo(x, y, duration=settings.PLAYER_MOUSE_MOVE_DURATION)
+            
+            # Небольшая задержка перед кликом
+            time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)
+            
+            # Выполняем двойной клик
             self.mouse.click(button, 2)
             
         elif action == "scroll":
@@ -345,13 +350,16 @@ class Player:
             except ValueError:
                 raise InvalidCommandError(f"Некорректные значения прокрутки: {scroll_values_str}")
             
-            # Определяем координаты для прокрутки
-            vector = sample_data.get('embeddings', [[]])[0]
-            x, y = get_xy(self.manager, sample_id, vector)
+            # Определяем координаты для клика
+            x, y = get_xy(self.manager, metadata)
             
-            # Перемещаем мышь и выполняем прокрутку
-            self.mouse.position = (x, y)
-            time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)  # Используем задержку из настроек
+            # Плавно перемещаем мышь с помощью PyAutoGUI
+            pyautogui.moveTo(x, y, duration=settings.PLAYER_MOUSE_MOVE_DURATION)
+            
+            # Небольшая задержка перед прокруткой
+            time.sleep(settings.PLAYER_MOUSE_MOVE_DELAY)
+            
+            # Выполняем прокрутку
             self.mouse.scroll(dx, dy)
        
     def play_all(self, commands: List[str]) -> None:

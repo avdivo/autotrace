@@ -1,4 +1,3 @@
-import mss
 import cv2
 import numpy as np
 import time
@@ -6,12 +5,17 @@ import multiprocessing
 from multiprocessing import shared_memory
 import logging
 import settings
+
 from exceptions import ScreenCaptureError, MemoryError, MonitorError
+from ui_detector import ScreenCapturer
+from hash_function import compute_dhash_vector, cosine_similarity
+
 
 # Настройка логгирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.SCREEN_MONITOR_LOG_LEVEL)  # Используем уровень из настроек
+
 
 class ScreenMonitor:
     """
@@ -34,7 +38,7 @@ class ScreenMonitor:
 
     def __init__(self, interval=settings.SCREEN_MONITOR_INTERVAL, 
                  monitor_number=settings.SCREEN_MONITOR_NUMBER, 
-                 diff_threshold=int(settings.SCREEN_HASH_DIFF_THRESHOLD * 100),  # Конвертируем процентное значение в абсолютное
+                 diff_threshold=int(settings.SCREEN_HASH_DIFF_THRESHOLD),
                  shared_memory_name=settings.SCREEN_SHARED_MEMORY_NAME, 
                  width=settings.SCREEN_RESOLUTION[0], 
                  height=settings.SCREEN_RESOLUTION[1]):
@@ -61,20 +65,7 @@ class ScreenMonitor:
         self.height = height
         self.process = None
         self.running = False
-        self.hash_base_img = None
-        
-        # Проверяем существование указанного монитора
-        try:
-            with mss.mss() as sct:
-                if monitor_number >= len(sct.monitors):
-                    raise ScreenCaptureError(f"Монитор с номером {monitor_number} не существует. Доступны мониторы с номерами от 0 до {len(sct.monitors) - 1}")
-                monitor = sct.monitors[monitor_number]
-                logger.info(f"Монитор {monitor_number} доступен: {monitor}")
-        except Exception as e:
-            if isinstance(e, ScreenCaptureError):
-                raise
-            raise ScreenCaptureError(f"Ошибка при проверке монитора: {str(e)}")
-        
+
         # Размер SharedMemory для хранения BGRA изображения (4 канала)
         # Хотя массив будет многомерный (height, width, 4), в shared_memory
         # он хранится как линейный буфер, но потом может быть представлен
@@ -167,14 +158,9 @@ class ScreenMonitor:
             buffer_shape (tuple): Форма буфера (высота, ширина, каналы)
             buffer_size (int): Размер буфера в байтах
         """
-        # Инициализация средства захвата экрана
-        try:
-            sct = mss.mss()
-            monitor = sct.monitors[monitor_number]
-        except Exception as e:
-            logger.error(f"Ошибка при инициализации средства захвата экрана: {e}")
-            raise ScreenCaptureError(f"Ошибка инициализации захвата экрана: {str(e)}")
-            
+        # Подготовка средства захвата экрана
+        capturer = ScreenCapturer(monitor_number=monitor_number)
+
         hash_base_img = None  # Хеш предыдущего изображения
         
         # Подключаемся к уже созданной в основном процессе shared memory
@@ -201,24 +187,19 @@ class ScreenMonitor:
         # Важно: хотя массив многомерный (3D), в памяти он хранится линейно
         shm_array = np.ndarray(shape=buffer_shape, dtype=np.uint8, buffer=shm.buf)
         
-        logger.info(f"Процесс мониторинга экрана запущен. Монитор: {monitor}, размер буфера: {buffer_shape}")
+        logger.info(f"Процесс мониторинга экрана запущен.")
         
         try:
             while True:
                 start_time = time.time()  # Засекаем время для расчета интервала
-                
-                try:
-                    # Делаем скриншот экрана
-                    scr_img = sct.grab(monitor)
-                    img = np.asarray(scr_img)  # Преобразуем в numpy массив
-                except Exception as e:
-                    logger.error(f"Ошибка при захвате экрана: {e}")
-                    raise ScreenCaptureError(f"Ошибка захвата экрана: {str(e)}")
+
+                # Захват всего экрана
+                img = capturer.capture()
                 
                 # Изменяем размер, если скриншот не соответствует размеру буфера
                 if img.shape[0] != buffer_shape[0] or img.shape[1] != buffer_shape[1]:
                     img = cv2.resize(img, (buffer_shape[1], buffer_shape[0]))
-                
+
                 # Проверяем, что количество каналов совпадает
                 if img.shape[2] != buffer_shape[2]:
                     # Преобразуем к нужному формату (BGRA)
@@ -228,10 +209,14 @@ class ScreenMonitor:
                         img = img[:, :, :4]
                 
                 # Получаем хеш изображения для сравнения
-                hash_img = cv2.img_hash.pHash(img)
-                
+                hash_img = compute_dhash_vector(img)
+
                 # Первый скриншот или значительное изменение экрана
-                if hash_base_img is None or (cv2.norm(hash_base_img[0], hash_img[0], cv2.NORM_HAMMING) > diff_threshold):
+                if hash_base_img is None or cosine_similarity(hash_base_img[0], hash_img[0]) > diff_threshold:
+                    time.sleep(0.2)  # Задержка для стабилизации изображения
+                    # Делаем скриншот экрана повторно
+                    hash_img = capturer.capture()
+
                     logger.info("Обнаружено изменение экрана или первый скриншот")
                     hash_base_img = hash_img  # Сохраняем новый хеш
                     
@@ -250,6 +235,7 @@ class ScreenMonitor:
             logger.info("Процесс мониторинга экрана остановлен пользователем")
         except Exception as e:
             logger.exception(f"Ошибка в процессе мониторинга экрана: {e}")
+            raise
             raise MonitorError(f"Ошибка в процессе мониторинга: {str(e)}")
         finally:
             # Освобождаем ресурсы
