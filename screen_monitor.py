@@ -11,45 +11,20 @@ from ui_detector import ScreenCapturer
 from hash_function import compute_dhash_vector, cosine_similarity
 
 
-# Настройка логгирования
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-logger.setLevel(settings.SCREEN_MONITOR_LOG_LEVEL)  # Используем уровень из настроек
-
-
 class ScreenMonitor:
     """
     Класс для мониторинга экрана и сохранения скриншотов в shared_memory.
     Создает отдельный процесс, который делает скриншоты через заданные промежутки времени.
     Если новый скриншот существенно отличается от предыдущего, он сохраняется в shared_memory.
     """
-    
-    @staticmethod
-    def set_log_level(level):
-        """
-        Устанавливает уровень логирования для модуля.
-        
-        Args:
-            level: Уровень логирования (logging.DEBUG, logging.INFO, logging.WARNING, 
-                  logging.ERROR, logging.CRITICAL)
-        """
-        logger.setLevel(level)
-        return logger.getEffectiveLevel()
-
-    def __init__(self, interval=settings.SCREEN_MONITOR_INTERVAL, 
-                 monitor_number=settings.SCREEN_MONITOR_NUMBER, 
-                 diff_threshold=int(settings.SCREEN_HASH_DIFF_THRESHOLD),
-                 shared_memory_name=settings.SCREEN_SHARED_MEMORY_NAME, 
-                 width=settings.SCREEN_RESOLUTION[0], 
+    def __init__(self, monitor_number=settings.SCREEN_MONITOR_NUMBER,
+                 width=settings.SCREEN_RESOLUTION[0],
                  height=settings.SCREEN_RESOLUTION[1]):
         """
         Инициализация монитора экрана.
         
         Args:
-            interval (float): Интервал между скриншотами в секундах
             monitor_number (int): Номер монитора для захвата
-            diff_threshold (int): Порог различия для определения изменения экрана
-            shared_memory_name (str): Имя области shared memory
             width (int): Ширина буфера изображения
             height (int): Высота буфера изображения
             
@@ -57,93 +32,10 @@ class ScreenMonitor:
             ScreenCaptureError: Если указанный монитор не существует
             MemoryError: Если возникла ошибка при создании shared memory
         """
-        self.interval = interval
         self.monitor_number = monitor_number
-        self.diff_threshold = diff_threshold
-        self.shared_memory_name = shared_memory_name
         self.width = width
         self.height = height
-        self.process = None
-        self.running = False
 
-        # Размер SharedMemory для хранения BGRA изображения (4 канала)
-        # Хотя массив будет многомерный (height, width, 4), в shared_memory
-        # он хранится как линейный буфер, но потом может быть представлен
-        # как многомерный np.ndarray с указанием нужной формы
-        self.buffer_shape = (height, width, 4)
-        self.buffer_size = height * width * 4
-        
-        # Создаем shared memory в основном процессе
-        try:
-            # Пытаемся получить существующую shared memory, если она уже создана
-            self.shm = shared_memory.SharedMemory(name=self.shared_memory_name)
-            logger.info(f"Подключились к существующей shared memory '{self.shared_memory_name}'")
-        except FileNotFoundError:
-            # Создаем новую shared memory, если она не существует
-            try:
-                self.shm = shared_memory.SharedMemory(
-                    name=self.shared_memory_name, 
-                    create=True, 
-                    size=self.buffer_size
-                )
-                # Инициализируем пустыми данными (нулями)
-                self.shm.buf[:] = b'\0' * self.buffer_size
-                logger.info(f"Создана новая shared memory '{self.shared_memory_name}' размером {self.buffer_size} байт")
-            except Exception as e:
-                raise MemoryError(f"Ошибка при создании shared memory: {str(e)}")
-        
-    def start(self):
-        """Запускает процесс мониторинга экрана"""
-        if self.running:
-            logger.warning("Монитор экрана уже запущен")
-            return
-            
-        self.running = True
-        try:
-            # Создаем и запускаем процесс для мониторинга экрана
-            self.process = multiprocessing.Process(
-                target=self._monitor_screen_process,
-                args=(self.interval, self.monitor_number, self.diff_threshold, 
-                      self.shared_memory_name, self.buffer_shape, self.buffer_size)
-            )
-            self.process.daemon = True  # Процесс завершится при завершении основной программы
-            self.process.start()
-            logger.info(f"Монитор экрана запущен с PID {self.process.pid}")
-        except Exception as e:
-            self.running = False
-            raise MonitorError(f"Ошибка при запуске процесса мониторинга: {str(e)}")
-        
-    def stop(self):
-        """Останавливает процесс мониторинга экрана и освобождает ресурсы"""
-        if not self.running:
-            logger.warning("Монитор экрана не запущен")
-            return
-            
-        self.running = False
-        # Корректно завершаем процесс
-        if self.process and self.process.is_alive():
-            try:
-                self.process.terminate()
-                self.process.join(timeout=1.0)
-                if self.process.is_alive():
-                    self.process.kill()  # Убиваем процесс если он не завершился
-                logger.info("Монитор экрана остановлен")
-            except Exception as e:
-                logger.error(f"Ошибка при остановке процесса: {e}")
-            
-        self.process = None
-        
-        # Освобождаем shared_memory если она была создана
-        if self.shm is not None:
-            try:
-                self.shm.close()
-                self.shm.unlink()  # Полностью удаляем shared_memory
-                logger.info(f"Shared memory '{self.shared_memory_name}' освобождена")
-            except Exception as e:
-                logger.error(f"Ошибка при освобождении shared memory: {e}")
-            finally:
-                self.shm = None
-    
     @staticmethod
     def _monitor_screen_process(interval, monitor_number, diff_threshold, 
                                shared_memory_name, buffer_shape, buffer_size):

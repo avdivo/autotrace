@@ -27,6 +27,7 @@ from exceptions import (
 )
 from chroma_db import chroma_db  # Добавляем прямой импорт chroma_db
 
+
 # Функции-заглушки для режима тестирования
 def mock_screen_update(manager: Any) -> str:
     """Заглушка для функции screen_update при автономном запуске."""
@@ -122,7 +123,26 @@ class Player:
             Union[Key, str]: Объект Key или строку, если клавиша не найдена в маппинге.
         """
         return self.key_mapping.get(key_name.lower(), key_name)
-    
+
+    def wait_screen(self, screen_id: str):
+        """
+        Желает скриншоты экрана и проверяет его на соответствие переданному идентификатору
+        экрана. По истечении лимита времени возвращает ошибку.
+
+        Параметры:
+            Идентификатор экрана.
+        """
+        # Ожидаем соответствие id текущему экрану
+        start_wait = time.time()
+        while screen_id != self.manager.screen_id and time.time() - start_wait < settings.PLAYER_SCREEN_WAIT_TIME:
+            self.manager.screen_update(0)  # Экран должен обновиться после события
+            time.sleep(0.3)
+
+        if screen_id != self.manager.screen_id:
+            raise ScreenMismatchError(
+                f"Текущий экран ({self.manager.screen_id}) не соответствует требуемому ({screen_id})"
+            )
+
     def play_one(self, command: str) -> None:
         """
         Воспроизводит одну команду.
@@ -151,20 +171,10 @@ class Player:
             get_xy = mock_get_xy
         else:
             # Импортируем функции только если не в автономном режиме
-            from images import screen_update, get_xy
-        
-        # Обновляем текущий экран перед выполнением команды
-        current_screen_id = screen_update(self.manager)
-        
-        # Проверяем, что скриншот был успешно инициализирован
-        if current_screen_id is None:
-            print("Предупреждение: Текущий screen_id не инициализирован.")
-            # Попробуем подождать немного и ещё раз получить screen_id
-            time.sleep(1.0)
-            current_screen_id = screen_update(self.manager)
-            if current_screen_id is None:
-                raise ScreenMismatchError("Не удалось получить текущий screen_id. Мониторинг экрана не инициализирован.")
-        
+            from images import get_xy
+
+        self.manager.add_command(command)  # Обновляем данные о событии в менеджере
+
         # Определяем тип команды и действие
         command_parts = command.split('_')
         
@@ -178,14 +188,12 @@ class Player:
         # Обработка команд клавиатуры
         if command_block == "kbd":
             # Получаем идентификатор из последней части команды
-            sample_id = command_parts[-1]
-            
-            # Для команд клавиатуры проверяем соответствие id текущему экрану
-            if sample_id != current_screen_id:
-                raise ScreenMismatchError(
-                    f"Текущий экран ({current_screen_id}) не соответствует требуемому ({sample_id})"
-                )
+            screen_id = command_parts[-1]
+
+            self.wait_screen(screen_id)  # Ожидаем переход к нужному экрану
             self._execute_kbd_command(command_action, command)
+
+            self.manager.screen_update(0)  # Экран должен обновиться после события
             return
         
         # Обработка команд мыши    
@@ -197,7 +205,7 @@ class Player:
             # Специальная обработка для автономного запуска
             if is_standalone:
                 # Создаем заглушку для sample_data
-                sample_data = {'embedding': [0.1, 0.2, 0.3], 'metadata': {'screen_id': current_screen_id}}
+                sample_data = {'embedding': [0.1, 0.2, 0.3], 'metadata': {'screen_id': self.manager.screen_id}}
                 self._execute_mouse_command(command_action, command, sample_id, sample_data)
                 return
             
@@ -211,15 +219,13 @@ class Player:
             metadata = sample_data.get('metadata', {})
             screen_id_from_db = metadata.get('screen_id')
 
-            # Если screen_id в базе не задан (None), значит команда мыши применима к любому экрану
-            # В противном случае проверяем соответствие текущего экрана с экраном из базы
-            if screen_id_from_db is not None and screen_id_from_db != current_screen_id:
-                raise ScreenMismatchError(
-                    f"Текущий экран ({current_screen_id}) не соответствует требуемому ({screen_id_from_db})"
-                )
-            
+            # Проверяем соответствие текущего экрана экрану из базы
+            self.wait_screen(screen_id_from_db)  # Ожидаем переход к нужному экрану
+
             # Выполняем команду мыши
             self._execute_mouse_command(command_action, command, metadata)
+
+            self.manager.screen_update(0)  # Экран должен обновиться после события
             return
         
         # Если мы дошли до сюда, значит команда неизвестного типа
@@ -361,7 +367,7 @@ class Player:
             
             # Выполняем прокрутку
             self.mouse.scroll(dx, dy)
-       
+
     def play_all(self, commands: List[str]) -> None:
         """
         Воспроизводит список команд последовательно.
@@ -377,7 +383,8 @@ class Player:
             return
             
         print(f"Воспроизведение списка из {len(commands)} команд")
-        
+        time.sleep(1)
+
         # Выполняем команды последовательно
         for i, command in enumerate(commands):
             try:

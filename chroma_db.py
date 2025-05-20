@@ -43,46 +43,65 @@ class Chroma:
             screen_collection_name (str): Название коллекции для экранов.
             sample_collection_name (str): Название коллекции для образцов.
         """
+        self.persist_directory = persist_directory
+        self.port = port
+        self.screen_collection_name = screen_collection_name
+        self.sample_collection_name = sample_collection_name
+        self.client = None
+        self.screen_collection = None
+        self.sample_collection = None
+        self._initialize_client()
+    
+    def _initialize_client(self):
+        """Инициализирует клиент ChromaDB."""
         try:
             # Создаем директорию для хранения данных ChromaDB, если она не существует
-            os.makedirs(persist_directory, exist_ok=True)
-            
+            os.makedirs(self.persist_directory, exist_ok=True)
+
             # Инициализируем клиент ChromaDB, который запускает сервер на указанном порту
             self.client = chromadb.Client(Settings(
                 chroma_server_host="localhost",
-                chroma_server_http_port=port,
-                persist_directory=persist_directory,
+                chroma_server_http_port=self.port,
+                persist_directory=self.persist_directory,
                 is_persistent=True
             ))
-            
+
             # Получаем или создаем коллекции для экранов и образцов
             self.screen_collection = self.client.get_or_create_collection(
-                name=screen_collection_name,
+                name=self.screen_collection_name,
                 metadata={"hnsw:space": "cosine"}  # Используем косинусное расстояние для сравнения векторов
             )
-            
+
             self.sample_collection = self.client.get_or_create_collection(
-                name=sample_collection_name,
+                name=self.sample_collection_name,
                 metadata={"hnsw:space": "cosine"}
             )
-            
+
         except Exception as e:
             raise ChromaDBError(f"Ошибка при инициализации ChromaDB: {str(e)}")
+
+    def _ensure_client(self):
+        """Проверяет и при необходимости переинициализирует клиент."""
+        if self.client is None or self.screen_collection is None or self.sample_collection is None:
+            self._initialize_client()
     
     def shutdown(self):
         """Останавливает сервер ChromaDB и освобождает ресурсы."""
-        if hasattr(self, 'client') and self.client:
-            # В хитрых случаях можно попробовать освободить ресурсы таким образом
+        if self.client is not None:
             try:
-                # Пытаемся получить доступ к внутренним механизмам клиента
+                if hasattr(self.client, 'persist'):
+                    self.client.persist()
+                
                 if hasattr(self.client, '_system'):
                     self.client._system.stop()
-                # Альтернативный метод для некоторых версий ChromaDB
                 elif hasattr(self.client, 'reset_state'):
                     self.client.reset_state()
             except Exception as e:
                 print(f"Предупреждение: Не удалось корректно остановить клиент ChromaDB: {str(e)}")
-                # В случае ошибки просто продолжаем выполнение
+            finally:
+                self.client = None
+                self.screen_collection = None
+                self.sample_collection = None
     
     def get_screen_id(self, embedding: List[float]) -> Optional[str]:
         """
@@ -97,18 +116,17 @@ class Chroma:
         Возвращает:
             Optional[str]: Идентификатор экрана или None, если подходящий экран не найден.
         """
+        self._ensure_client()
         try:
-            # Выполняем запрос к коллекции экранов
             results = self.screen_collection.query(
                 query_embeddings=[embedding],
                 n_results=1,
                 include=["distances", "metadatas"]
             )
             
-            # Проверяем, есть ли результаты и достаточно ли они близки
             if results["distances"] and results["distances"][0]:
                 distance = results["distances"][0][0]
-                if distance < (1 - settings.SCREEN_SIMILARITY_THRESHOLD):  # Преобразование сходства в расстояние
+                if distance < (1 - settings.SCREEN_SIMILARITY_THRESHOLD):
                     return results["ids"][0][0]
             
             return None
@@ -125,6 +143,7 @@ class Chroma:
             embedding (List[float]): Векторное представление экрана.
             metadata (Optional[Dict[str, Any]]): Метаданные экрана (опционально).
         """
+        self._ensure_client()
         try:
             # Проверяем, не существует ли уже экран с таким ID
             try:
@@ -150,93 +169,85 @@ class Chroma:
                 )
         
         except DuplicateIDError as e:
-            # Пробрасываем ошибку дубликата ID
             raise e
         except Exception as e:
-            # Проверяем ошибку на наличие признаков дубликата ID
             error_message = str(e).lower()
             if "already exists" in error_message or "duplicate" in error_message or "unique" in error_message:
                 raise DuplicateIDError(f"Экран с id {screen_id} уже существует")
             raise ChromaDBError(f"Ошибка при создании экрана: {str(e)}")
     
-    def get_sample_id(self, embedding: List[float], metadata: Dict[str, str]) -> Optional[str]:
-        """
-        Ищет образец по вектору и метаданным в базе данных.
-        
-        Проверяет, есть ли в базе данных vector, близкий к переданному,
-        с указанным screen_id в метаданных.
-        
-        Параметры:
-            embedding (List[float]): Векторное представление образца для поиска.
-            metadata (Dict[str, str]): Метаданные, включающие screen_id.
-            
-        Возвращает:
-            Optional[str]: Идентификатор образца или None, если подходящий образец не найден.
-        """
-        try:
-            # Проверяем, что в метаданных есть screen_id
-            if "screen_id" not in metadata:
-                raise ValueError("Метаданные должны содержать ключ 'screen_id'")
-            
-            # Выполняем запрос к коллекции образцов с фильтрацией по screen_id
-            results = self.sample_collection.query(
-                query_embeddings=[embedding],
-                n_results=1,
-                where={"screen_id": metadata["screen_id"]},
-                include=["distances", "metadatas"]
-            )
-            
-            # Проверяем, есть ли результаты и достаточно ли они близки
-            if results["distances"] and results["distances"][0]:
-                distance = results["distances"][0][0]
-                if distance < (1 - settings.SAMPLE_SIMILARITY_THRESHOLD):  # Преобразование сходства в расстояние
-                    return results["ids"][0][0]
-            
-            return None
-        
-        except ValueError as e:
-            raise e
-        except Exception as e:
-            raise ChromaDBError(f"Ошибка при поиске sample_id: {str(e)}")
+    # def get_sample_id(self, embedding: List[float], metadata: Dict[str, str]) -> Optional[str]:
+    #     """
+    #     Ищет образец по вектору и метаданным в базе данных.
+    #
+    #     Проверяет, есть ли в базе данных vector, близкий к переданному,
+    #     с указанным screen_id в метаданных.
+    #
+    #     Параметры:
+    #         embedding (List[float]): Векторное представление образца для поиска.
+    #         metadata (Dict[str, str]): Метаданные, включающие screen_id.
+    #
+    #     Возвращает:
+    #         Optional[str]: Идентификатор образца или None, если подходящий образец не найден.
+    #     """
+    #     try:
+    #         # Проверяем, что в метаданных есть screen_id
+    #         if "screen_id" not in metadata:
+    #             raise ValueError("Метаданные должны содержать ключ 'screen_id'")
+    #
+    #         # Выполняем запрос к коллекции образцов с фильтрацией по screen_id
+    #         results = self.sample_collection.query(
+    #             query_embeddings=[embedding],
+    #             n_results=1,
+    #             where={"screen_id": metadata["screen_id"]},
+    #             include=["distances", "metadatas"]
+    #         )
+    #
+    #         # Проверяем, есть ли результаты и достаточно ли они близки
+    #         if results["distances"] and results["distances"][0]:
+    #             distance = results["distances"][0][0]
+    #             if distance < (1 - settings.SAMPLE_SIMILARITY_THRESHOLD):  # Преобразование сходства в расстояние
+    #                 return results["ids"][0][0]
+    #
+    #         return None
+    #
+    #     except ValueError as e:
+    #         raise e
+    #     except Exception as e:
+    #         raise ChromaDBError(f"Ошибка при поиске sample_id: {str(e)}")
     
-    def create_sample(self, sample_id: str, embedding: List[float], metadata: Dict[str, str]) -> None:
+    def create_sample(self, sample_id: str, metadata: Dict[str, str]) -> None:
         """
         Создает новую запись образца в базе данных.
         
         Параметры:
             sample_id (str): Уникальный идентификатор образца.
-            embedding (List[float]): Векторное представление образца.
             metadata (Dict[str, str]): Метаданные образца, включающие screen_id.
         """
+        self._ensure_client()
         try:
-            # Проверяем, что в метаданных есть screen_id
             if "screen_id" not in metadata:
                 raise ValueError("Метаданные должны содержать ключ 'screen_id'")
             
-            # Проверяем, не существует ли уже образец с таким ID
             try:
                 existing_sample = self.sample_collection.get(ids=sample_id)
                 if existing_sample and len(existing_sample['ids']) > 0:
                     raise DuplicateIDError(f"Образец с id {sample_id} уже существует")
             except Exception as check_e:
-                # Если ошибка не связана с проверкой существования, игнорируем её
                 if not "not found" in str(check_e).lower():
                     raise check_e
-            
-            # Добавляем запись в коллекцию образцов
+
             self.sample_collection.add(
                 ids=sample_id,
-                embeddings=[embedding],
+                embeddings=[[0.0] * 64],
                 metadatas=metadata
             )
         
         except ValueError as e:
             raise e
         except DuplicateIDError as e:
-            # Пробрасываем ошибку дубликата ID
             raise e
         except Exception as e:
-            # Проверяем ошибку на наличие признаков дубликата ID
             error_message = str(e).lower()
             if "already exists" in error_message or "duplicate" in error_message or "unique" in error_message:
                 raise DuplicateIDError(f"Образец с id {sample_id} уже существует")
@@ -253,22 +264,19 @@ class Chroma:
         Возвращает:
             Optional[Dict[str, Any]]: Словарь с информацией об образце или None, если образец не найден.
         """
+        self._ensure_client()
         try:
-            # Формируем критерии фильтрации, если переданы метаданные
             where_filter = metadata if metadata else None
             
-            # Выполняем запрос к коллекции образцов
             results = self.sample_collection.get(
                 ids=sample_id,
                 where=where_filter,
-                include=["embeddings", "metadatas"]
+                include=["metadatas"]
             )
-            
-            # Проверяем, есть ли результаты
+
             if results["ids"]:
                 return {
                     "id": results["ids"][0],
-                    "embedding": results["embeddings"][0],
                     "metadata": results["metadatas"][0] if "metadatas" in results else None
                 }
             

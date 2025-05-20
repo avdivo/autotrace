@@ -111,3 +111,4 @@ def handle_exception(e: BaseAppError) -> None:
         e (BaseAppError): Исключение для обработки.
     """
     print(f"Произошла ошибка: {str(e)}")
+    raise

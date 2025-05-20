@@ -20,7 +20,7 @@ from collections import defaultdict
 # Импорт из других модулей проекта
 import settings
 from exceptions import KeyboardError, MouseError, InputError
-from images import screen_update, set_sample
+from images import set_sample
 
 
 class InputTracker:
@@ -219,15 +219,13 @@ class InputTracker:
                     # Регистрируем одиночный ESC
                     command = f"kbd_click_(esc)_{self.manager.screen_id}"
                     self.commands.append(command)
+
                     print(f"Нажатие клавиши: {command}")
                     self.pending_esc = False
                 
                 # Обработка отложенного клика мыши в основном цикле
                 if self.pending_click and (time.time() - self.pending_click_time >= self.dblclick_timeout):
                     # Прошло достаточно времени после клика, и не было второго клика
-                    # Получаем образец изображения для одиночного клика
-                    x, y = self.pending_click_position
-                    sample_id = set_sample(self.manager, x, y)
 
                     # Регистрируем одиночный клик
                     button_type = "left"
@@ -237,11 +235,17 @@ class InputTracker:
                         button_type = "middle"
                     
                     # Формируем команду
+                    self.manager.add_command(f"mouse_click_{button_type}")  # Обновляем данные о событии в менеджере
+                    x, y = self.pending_click_position
+                    sample_id = set_sample(self.manager, x, y)
+
                     command = f"mouse_click_{button_type}_{sample_id}"
                     self.commands.append(command)
                     print(f"Клик мыши ({button_type}) по координатам {self.pending_click_position}: {command}")
                     self.pending_click = False
-            
+
+                    self.manager.screen_update()  # Экран должен обновиться после события
+
             return self.commands
         except Exception as e:
             raise InputError(f"Ошибка при запуске отслеживания: {str(e)}")
@@ -268,9 +272,6 @@ class InputTracker:
             key: Объект клавиши pynput
         """
         try:
-            # Обновляем экран перед обработкой события
-            screen_id = screen_update(self.manager)
-            
             # Проверка на двойное нажатие ESC для выхода
             if key == keyboard.Key.esc:
                 current_time = time.time()
@@ -467,10 +468,12 @@ class InputTracker:
                     self.alt_pressed = False
                 elif key in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r):
                     self.shift_pressed = False
-                
+
         except Exception as e:
             raise KeyboardError(f"Ошибка при обработке отпускания клавиши: {str(e)}")
-    
+
+        self.manager.screen_update()  # Экран должен обновиться после события
+
     def on_mouse_click(self, x, y, button, pressed) -> None:
         """
         Обработчик событий мыши (клики).
@@ -504,13 +507,12 @@ class InputTracker:
                         abs(current_position[0] - self.pending_click_position[0]) <= 5 and
                         abs(current_position[1] - self.pending_click_position[1]) <= 5 and
                         current_time - self.pending_click_time < self.dblclick_timeout):
-                        
+
                         # Получаем образец изображения только один раз при двойном клике
                         # Экран обновлять не нужно, он уже был обновлен при первом клике
+                        self.manager.add_command(f"mouse_dblclick_{button_type}")  # Обновляем данные о событии в менеджере
                         sample_id = set_sample(self.manager, x, y)
-                        
-                        # Это двойной клик - записываем соответствующую команду
-                        event_id = settings.generate_unique_id()
+
                         command = f"mouse_dblclick_{button_type}_{sample_id}"
                         self.commands.append(command)
                         print(f"Двойной клик мыши ({button_type}) по координатам ({x}, {y}): {command}")
@@ -519,12 +521,10 @@ class InputTracker:
                         self.last_click_time = 0
                         self.last_click_position = (0, 0)
                         self.last_click_button = None
+
+                        self.manager.screen_update()  # Экран должен обновиться после события
                         return
-                
-                # Для первого клика только обновляем экран, но не получаем образец сразу
-                # Образец будет получен либо при двойном клике, либо когда истечет таймаут
-                screen_id = screen_update(self.manager)
-                
+
                 # Сохраняем информацию о текущем клике для возможного определения двойного клика
                 self.pending_click = True
                 self.pending_click_time = current_time
@@ -547,11 +547,11 @@ class InputTracker:
             dx (int): Горизонтальная прокрутка
             dy (int): Вертикальная прокрутка
         """
+        self.manager.screen_update()  # Экран должен обновиться после события
+
         try:
-            # Обновляем экран перед обработкой события
-            screen_id = screen_update(self.manager)
-            
             # Получаем образец изображения в месте прокрутки
+            self.manager.add_command(f"mouse_scroll_{dx},{dy}")  # Обновляем данные о событии в менеджере
             sample_id = set_sample(self.manager, x, y)
             
             # Формируем команду
@@ -561,7 +561,9 @@ class InputTracker:
             
         except Exception as e:
             raise MouseError(f"Ошибка при обработке прокрутки мыши: {str(e)}")
-    
+
+        self.manager.screen_update()  # Экран должен обновиться после события
+
     def get_key_name(self, key) -> str:
         """
         Преобразует объект клавиши в строковое представление.
@@ -603,8 +605,7 @@ def main():
         from manager import Manager
         
         # Инициализируем менеджер
-        manager = Manager()
-        manager.start()
+        manager = Manager(action_name="record")
         
         try:
             # Создаем и запускаем трекер ввода

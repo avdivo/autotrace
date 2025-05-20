@@ -9,6 +9,7 @@ import numpy as np
 from typing import List, Tuple, Optional
 import mss
 
+import settings
 from hash_function import compute_dhash_vector, hex_to_dhash_vector, cosine_similarity
 
 
@@ -105,7 +106,7 @@ MIN_BOX_SIZE = 1  # минимальная ширина/высота прямо�
 MIN_BOX_AREA = 37  # Минимальная площадь, при которой бокс не объединяется
 
 # Порог схожести изображений
-MIN_SIMILARITY_THRESHOLD = 0.7  # Минимальное совпадение (85%)
+MIN_SIMILARITY_THRESHOLD = 0.72  # Минимальное совпадение (85%)
 
 
 class UIRegions:
@@ -286,17 +287,7 @@ class UIRegions:
         # Фильтрует и объединяет bounding boxes
         blocks = refine_boxes(filtered_boxes)
 
-        print("Время поиска регионов", time.time() - st)
-
-        # Отображение регионов
-        # img = self.original_image.copy()
-        # for (x, y, w, h) in blocks:
-        #     cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        #
-        # cv2.namedWindow("Show regions", cv2.WINDOW_FREERATIO)  # Окно можно изменять
-        # cv2.imshow("Show regions", img)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
+        # print("Время поиска регионов", time.time() - st)
 
         return blocks
 
@@ -409,7 +400,7 @@ class UIRegions:
 
         # Находим максимальное совпадение
         best_similarity = max(similarity_scores, key=lambda r: r[1])[1]
-        print("Лучшее сходство", best_similarity)
+        # print("Лучшее сходство", best_similarity)
         if best_similarity < MIN_SIMILARITY_THRESHOLD:
             return []
         # Возвращаем только регионы, которые проходят минимальный порог
@@ -438,7 +429,7 @@ class UIRegions:
 
         # Находим максимальное совпадение
         sort_similarity = sorted(similarity_scores, key=lambda r: r[1])
-        print("Лучшее сходство среди расширенных", sort_similarity[-1][1])
+        # print("Лучшее сходство среди расширенных", sort_similarity[-1][1])
         if sort_similarity[-1][1] < MIN_SIMILARITY_THRESHOLD-0.2:
             return None  # Если не проходит порог схожести
 

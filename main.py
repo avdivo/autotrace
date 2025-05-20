@@ -21,11 +21,12 @@ from player import Player
 from input_tracker import InputTracker
 import settings
 from exceptions import (
-    BaseAppError, 
-    InvalidCommandError, 
+    BaseAppError,
+    InvalidCommandError,
     PlaybackError,
     InputError
 )
+
 
 def run(command: str) -> None:
     """
@@ -41,10 +42,10 @@ def run(command: str) -> None:
     """
     if not command:
         raise InvalidCommandError("Пустая команда")
-    
+
     # Определяем тип команды по первой части (до первого подчеркивания)
     action = command.split('_')[0].lower()
-    
+
     if action == "play":
         # Выполнение скрипта команд
         parts = command.strip().split('_')
@@ -57,15 +58,15 @@ def run(command: str) -> None:
         record(filename)
     elif action in ["kbd", "mouse"]:
         # Выполнение одиночной команды
-        manager = Manager()
+        manager = Manager(action_name="play")
         try:
-            manager.start()
             player_instance = Player(manager)
             player_instance.play_one(command)
         finally:
             manager.stop()
     else:
         raise InvalidCommandError(f"Неизвестная команда: {command}")
+
 
 def play(filename: Optional[str] = None) -> None:
     """
@@ -83,11 +84,11 @@ def play(filename: Optional[str] = None) -> None:
         target_file = settings.DEFAULT_COMMANDS_FILE
     else:
         target_file = f"{filename}.json" if not filename.endswith(".json") else filename
-    
+
     # Проверка существования файла
     if not os.path.exists(target_file):
         raise PlaybackError(f"Файл команд не найден: {target_file}")
-    
+
     # Загрузка команд из файла
     try:
         with open(target_file, 'r', encoding='utf-8') as file:
@@ -96,40 +97,17 @@ def play(filename: Optional[str] = None) -> None:
         raise PlaybackError(f"Ошибка чтения JSON из файла: {target_file}")
     except Exception as e:
         raise PlaybackError(f"Ошибка при чтении файла {target_file}: {str(e)}")
-    
+
     # Создаем Manager и Player для воспроизведения команд
-    manager = Manager()
+    manager = Manager(action_name="play")
     try:
-        manager.start()
-        
-        # Активное ожидание инициализации скриншота
-        print("Ожидание инициализации мониторинга экрана...")
-        max_wait_time = 5.0  # Максимальное время ожидания в секундах
-        wait_interval = 0.5  # Интервал проверки в секундах
-        start_time = time.time()
-        
-        # Импортируем функцию screen_update из модуля images
-        from images import screen_update
-        
-        # Ждем, пока не получим скриншот или не истечет время ожидания
-        while time.time() - start_time < max_wait_time:
-            # Пытаемся получить screen_id
-            current_screen_id = screen_update(manager)
-            
-            # Если получили screen_id, значит скриншот инициализирован
-            if current_screen_id is not None:
-                print(f"Мониторинг экрана инициализирован. Текущий screen_id: {current_screen_id}")
-                break
-                
-            # Небольшая пауза перед следующей попыткой
-            time.sleep(wait_interval)
-        else:
-            print("Предупреждение: Не удалось дождаться инициализации скриншота.")
-            
+        manager.screen_update(0)  # Обновляем скриншот в памяти
+
         player_instance = Player(manager)
         player_instance.play_all(commands)
     finally:
         manager.stop()
+
 
 def record(filename: Optional[str] = None) -> None:
     """
@@ -147,24 +125,23 @@ def record(filename: Optional[str] = None) -> None:
         target_file = settings.DEFAULT_COMMANDS_FILE
     else:
         target_file = f"{filename}.json" if not filename.endswith(".json") else filename
-    
+
     print(f"Начинаю запись действий в файл: {target_file}")
     print("Для завершения записи нажмите дважды ESC")
-    
+
     # Создаем Manager для записи действий
-    manager = Manager()
+    manager = Manager(action_name="record")
     try:
-        # Запускаем Manager
-        manager.start()
-        
+        manager.screen_update(0)  # Обновляем скриншот в памяти
+
         # Создание и запуск трекера ввода с передачей объекта Manager
         input_tracker = InputTracker(manager)
         commands = input_tracker.start()
-        
+
         # Сохранение списка команд в файл
         with open(target_file, 'w', encoding='utf-8') as file:
             json.dump(commands, file, ensure_ascii=False, indent=2)
-        
+
         print(f"Запись завершена. Сохранено {len(commands)} команд в файл {target_file}")
     except InputError as e:
         raise PlaybackError(f"Ошибка при записи действий: {str(e)}")
@@ -173,6 +150,7 @@ def record(filename: Optional[str] = None) -> None:
     finally:
         # Останавливаем Manager
         manager.stop()
+
 
 def cli_main() -> None:
     """
@@ -187,9 +165,9 @@ def cli_main() -> None:
     parser = argparse.ArgumentParser(description="Управление автоматизацией действий пользователя")
     parser.add_argument('command', nargs='?', default='', help='Команда для выполнения')
     parser.add_argument('params', nargs='*', help='Параметры команды')
-    
+
     args = parser.parse_args()
-    
+
     # Получаем полную команду из аргументов
     full_command = args.command
     if args.params:
@@ -200,50 +178,43 @@ def cli_main() -> None:
             # например kbd_click (1) 1745353023 -> kbd_click_(1)_1745353023
             key = args.params[0]
             screen_id = args.params[-1]
-            
+
             # Проверяем, содержит ли key уже скобки
             if not (key.startswith('(') and key.endswith(')')):
                 key = f"({key})"
-                
+
             full_command = f"{full_command}_{key}_{screen_id}"
-            
+
             print(f"Собранная команда: {full_command}")
         else:
             # Обычная обработка для других команд
             full_command += "_" + "_".join(args.params)
-    
-    manager = Manager()
-    
+
     try:
-        # Запускаем Manager
-        manager.start()
-        
-        # Добавляем активное ожидание инициализации скриншота для всех команд
-        # кроме play и record, которые имеют собственную логику ожидания
-        if not full_command.startswith(('play', 'record')):
-            print("Ожидание инициализации мониторинга экрана...")
-            max_wait_time = 5.0  # Максимальное время ожидания в секундах
-            wait_interval = 0.5  # Интервал проверки в секундах
-            start_time = time.time()
-            
-            # Импортируем функцию screen_update из модуля images
-            from images import screen_update
-            
-            # Ждем, пока не получим скриншот или не истечет время ожидания
-            while time.time() - start_time < max_wait_time:
-                # Пытаемся получить screen_id
-                current_screen_id = screen_update(manager)
-                
-                # Если получили screen_id, значит скриншот инициализирован
-                if current_screen_id is not None:
-                    print(f"Мониторинг экрана инициализирован. Текущий screen_id: {current_screen_id}")
-                    break
-                    
-                # Небольшая пауза перед следующей попыткой
-                time.sleep(wait_interval)
-            else:
-                print("Предупреждение: Не удалось дождаться инициализации скриншота.")
-        
+
+        # # Добавляем активное ожидание инициализации скриншота для всех команд
+        # # кроме play и record, которые имеют собственную логику ожидания
+        # if not full_command.startswith(('play', 'record')):
+        #     print("Ожидание инициализации мониторинга экрана...")
+        #     max_wait_time = 5.0  # Максимальное время ожидания в секундах
+        #     wait_interval = 0.5  # Интервал проверки в секундах
+        #     start_time = time.time()
+        #
+        #     # Ждем, пока не получим скриншот или не истечет время ожидания
+        #     while time.time() - start_time < max_wait_time:
+        #         # Пытаемся получить screen_id
+        #         current_screen_id = manager.screen_update(0)
+        #
+        #         # Если получили screen_id, значит скриншот инициализирован
+        #         if current_screen_id is not None:
+        #             print(f"Мониторинг экрана инициализирован. Текущий screen_id: {current_screen_id}")
+        #             break
+        #
+        #         # Небольшая пауза перед следующей попыткой
+        #         time.sleep(wait_interval)
+        #     else:
+        #         print("Предупреждение: Не удалось дождаться инициализации скриншота.")
+
         # Выполняем команду
         if full_command:
             run(full_command)
@@ -259,9 +230,7 @@ def cli_main() -> None:
         handle_exception(e)
     except Exception as e:
         print(f"Неизвестная ошибка: {str(e)}")
-    finally:
-        # Останавливаем Manager
-        manager.stop()
+
 
 if __name__ == "__main__":
-    cli_main() 
+    cli_main()
