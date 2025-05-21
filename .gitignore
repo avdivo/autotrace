@@ -16,4 +16,4 @@ __pycache__/
 # Игнорировать временные файлы
 /sample/
 /output.txt
-/temp_commands.json
+/scripts/6.json

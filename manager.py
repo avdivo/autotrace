@@ -19,7 +19,7 @@ import numpy as np
 
 import settings
 from chroma_db import chroma_db as chroma  # Импортируем существующий экземпляр с правильным именем
-from exceptions import MonitorError, ChromaDBError, BaseAppError
+from exceptions import ChromaDBError
 from ui_detector import ScreenCapturer
 from hash_function import compute_dhash_vector, dhash_vector_to_hex
 
@@ -60,6 +60,9 @@ class Manager:
         self.step_number = 0  # Номер выполняемого действия
         self.command_name = ""  # Название выполняемого действия (команда)
 
+        self.stop_flag = False  # Сигнал, что программу нужно остановить
+        self.last_esc_time = 0  # Время последнего нажатия ESC
+
         logger.info(f"Выполняется {action_name}")
 
     @property
@@ -88,6 +91,7 @@ class Manager:
             self.timer.cancel()
 
         self.timer = threading.Timer(delay, self._delayed_update, args=(delay,))
+        self.timer.daemon = True  # Делаем поток демоном
         self.timer.start()
 
     def update_screen(self) -> str:
@@ -133,12 +137,6 @@ class Manager:
         if screen_id is None:
             screen_id = settings.generate_unique_id()
             chroma.create_screen(screen_id, embedding)
-
-        # # Сохраняем полный скриншот в папке screenshots
-        # screenshots_folder = settings.SCREENSHOTS_DIR
-        # os.makedirs(screenshots_folder, exist_ok=True)
-        # screenshot_path = os.path.join(screenshots_folder, f"{screen_id}.png")
-        # cv2.imwrite(screenshot_path, screenshot)
 
         self.blocked = False  # Разрешаем чтение данных
 

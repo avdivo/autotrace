@@ -51,11 +51,13 @@ def run(command: str) -> None:
         parts = command.strip().split('_')
         filename = parts[1] if len(parts) > 1 else None
         play(filename)
+
     elif action == "record":
         # Запись скрипта команд
         parts = command.strip().split('_')
         filename = parts[1] if len(parts) > 1 else None
         record(filename)
+
     elif action in ["kbd", "mouse"]:
         # Выполнение одиночной команды
         manager = Manager(action_name="play")
@@ -84,6 +86,7 @@ def play(filename: Optional[str] = None) -> None:
         target_file = settings.DEFAULT_COMMANDS_FILE
     else:
         target_file = f"{filename}.json" if not filename.endswith(".json") else filename
+    target_file = os.path.join(settings.COMMANDS_FILE_DIR, target_file)
 
     # Проверка существования файла
     if not os.path.exists(target_file):
@@ -125,6 +128,7 @@ def record(filename: Optional[str] = None) -> None:
         target_file = settings.DEFAULT_COMMANDS_FILE
     else:
         target_file = f"{filename}.json" if not filename.endswith(".json") else filename
+    target_file = os.path.join(settings.COMMANDS_FILE_DIR, target_file)
 
     print(f"Начинаю запись действий в файл: {target_file}")
     print("Для завершения записи нажмите дважды ESC")

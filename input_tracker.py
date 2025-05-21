@@ -618,7 +618,7 @@ def main():
                 print(f"{i}. {cmd}")
                 
             # Сохраняем команды в файл по умолчанию
-            output_file = settings.DEFAULT_COMMANDS_FILE
+            output_file = os.path.join(settings.COMMANDS_FILE_DIR, settings.DEFAULT_COMMANDS_FILE)
             with open(output_file, 'w', encoding='utf-8') as file:
                 json.dump(commands, file, ensure_ascii=False, indent=2)
             print(f"Команды сохранены в файл: {output_file}")

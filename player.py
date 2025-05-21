@@ -9,10 +9,11 @@
 по одиночным командам или их списку.
 """
 
-import time
-import sys
 import re
+import sys
+import time
 from typing import List, Optional, Dict, Any, Union
+from pynput import keyboard
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
 import pyautogui  # Добавляем импорт PyAutoGUI
@@ -111,7 +112,20 @@ class Player:
             'right': Button.right,
             'middle': Button.middle
         }
-    
+
+        # Запуск слушателя клавиш в фоне
+        listener = keyboard.Listener(on_press=self.on_press)
+        listener.start()
+
+    def on_press(self, key):
+        """Слушатель клавиатуры для остановки выполнения программы."""
+        if key == keyboard.Key.esc:
+            current_time = time.time()
+            if current_time - self.manager.last_esc_time <= 0.5:
+                self.manager.stop_flag = True
+                return False  # Остановить слушатель
+            self.manager.last_esc_time = current_time
+
     def _get_key(self, key_name: str) -> Union[Key, str]:
         """
         Преобразует строковое представление клавиши в объект Key.
@@ -400,8 +414,11 @@ class Player:
                 # Выполнение команды
                 self.play_one(command)
                 
-                print(f"Команда {i+1} успешно выполнена")
-                
+                # print(f"Команда {i+1} успешно выполнена")
+                if self.manager.stop_flag:
+                    # Установлен флаг сигнализирующий о принудительной остановке выполнения
+                    break
+
             except ScreenMismatchError as e:
                 # Выводим ошибку, но продолжаем выполнение следующих команд
                 print(f"Ошибка при выполнении команды {i+1} ({command}): {str(e)}")

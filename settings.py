@@ -33,9 +33,13 @@ SAMPLES_DIR: str = "sample"
 """Путь к папке для хранения образцов изображений (по умолчанию: 'sample')."""
 
 # Имя файла для временного хранения команд по умолчанию
-DEFAULT_COMMANDS_FILE: str = "temp_commands.json"
-"""Имя файла для временного хранения команд по умолчанию (по умолчанию: 'temp_commands.json').
+DEFAULT_COMMANDS_FILE: str = "temp_file.json"
+"""Имя файла для временного хранения команд по умолчанию.
 Используется при записи и воспроизведении команд без указания имени файла."""
+
+# Путь к папке для хранения скриптов
+COMMANDS_FILE_DIR: str = "scripts"
+"""Путь к папке для хранения скриптов."""
 
 # Координаты верхнего левого угла области для анализа экрана
 TOP_LEFT_CORNER: Tuple[int, int] = (0, 0)
@@ -158,6 +162,6 @@ def generate_unique_id() -> str:
     return str(candidate_id)
 
 # Создание директорий для хранения данных, если они не существуют
-for directory in [SCREENSHOTS_DIR, SAMPLES_DIR, CHROMA_PERSIST_DIRECTORY]:
+for directory in [SCREENSHOTS_DIR, SAMPLES_DIR, CHROMA_PERSIST_DIRECTORY, COMMANDS_FILE_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)

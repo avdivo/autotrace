@@ -79,11 +79,6 @@ class Chroma:
 
         except Exception as e:
             raise ChromaDBError(f"Ошибка при инициализации ChromaDB: {str(e)}")
-
-    def _ensure_client(self):
-        """Проверяет и при необходимости переинициализирует клиент."""
-        if self.client is None or self.screen_collection is None or self.sample_collection is None:
-            self._initialize_client()
     
     def shutdown(self):
         """Останавливает сервер ChromaDB и освобождает ресурсы."""
@@ -116,7 +111,6 @@ class Chroma:
         Возвращает:
             Optional[str]: Идентификатор экрана или None, если подходящий экран не найден.
         """
-        self._ensure_client()
         try:
             results = self.screen_collection.query(
                 query_embeddings=[embedding],
@@ -143,7 +137,6 @@ class Chroma:
             embedding (List[float]): Векторное представление экрана.
             metadata (Optional[Dict[str, Any]]): Метаданные экрана (опционально).
         """
-        self._ensure_client()
         try:
             # Проверяем, не существует ли уже экран с таким ID
             try:
@@ -224,7 +217,6 @@ class Chroma:
             sample_id (str): Уникальный идентификатор образца.
             metadata (Dict[str, str]): Метаданные образца, включающие screen_id.
         """
-        self._ensure_client()
         try:
             if "screen_id" not in metadata:
                 raise ValueError("Метаданные должны содержать ключ 'screen_id'")
@@ -264,7 +256,6 @@ class Chroma:
         Возвращает:
             Optional[Dict[str, Any]]: Словарь с информацией об образце или None, если образец не найден.
         """
-        self._ensure_client()
         try:
             where_filter = metadata if metadata else None
             
