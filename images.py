@@ -95,17 +95,13 @@ def get_xy(manager: Manager, metadata: Dict) -> Tuple[int, int]:
     hash_extended_region = metadata['hash_extended_region']
 
     # Проверяем наличие элемента на экране
-    if manager.screenshot is None:
-        raise ScreenCaptureError("Текущий скриншот недоступен")
-
-    # Проверяем наличие элемента на экране
     start_wait = time.time()
     best_regions = []
     while len(best_regions) == 0 and time.time() - start_wait < settings.PLAYER_ELEMENT_WAIT_TIME:
         ui_regions = UIRegions(manager.screenshot)  # Создаем объект с регионами
         best_regions = ui_regions.find_best_matching_regions(hash_region)  # Поиск регионов подходящих на образец (по хэшу)
         manager.screen_update(0)
-        time.sleep(0.3)
+        # time.sleep(0.3)
 
     # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
     manager.report(green_blocks=ui_regions.regions)

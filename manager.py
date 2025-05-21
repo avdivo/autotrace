@@ -9,6 +9,8 @@
 записи и воспроизведения действий пользователя.
 """
 import os
+import time
+
 import cv2
 import logging
 import threading
@@ -49,7 +51,7 @@ class Manager:
         self.blocked = False  # Блокировка доступа к скриншоту во время его обновления
 
         self.screen_id: Optional[str] = None
-        self.screenshot: Optional[np.ndarray] = None
+        self._screenshot: Optional[np.ndarray] = None
         self.chroma = chroma  # Добавляем ссылку на глобальный экземпляр chroma_db
         self._is_running: bool = False
         self.timer: Optional[threading.Timer] = None
@@ -59,6 +61,17 @@ class Manager:
         self.command_name = ""  # Название выполняемого действия (команда)
 
         logger.info(f"Выполняется {action_name}")
+
+    @property
+    def screenshot(self):
+        """Получить свойство можно только если блокировка (blocked) снята (False)"""
+        while self.blocked:
+            time.sleep(0.1)
+        return self._screenshot
+
+    @screenshot.setter
+    def screenshot(self, value):
+        self._screenshot = value
 
     def _delayed_update(self, delay: float):
         """
@@ -70,7 +83,7 @@ class Manager:
         """
         Запускает обновление экрана с задержкой.
         """
-        self.blocked = True  #
+        self.blocked = True  # Запрещаем получение данных до завершения получения скриншота
         if self.timer and self.timer.is_alive():
             self.timer.cancel()
 
@@ -127,8 +140,11 @@ class Manager:
         # screenshot_path = os.path.join(screenshots_folder, f"{screen_id}.png")
         # cv2.imwrite(screenshot_path, screenshot)
 
+        self.blocked = False  # Разрешаем чтение данных
+
         # Сохраняем screen_id в Manager и возвращаем его
         self.screen_id = screen_id
+
         return screen_id
 
     def stop(self) -> None:

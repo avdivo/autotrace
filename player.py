@@ -136,12 +136,15 @@ class Player:
         start_wait = time.time()
         while screen_id != self.manager.screen_id and time.time() - start_wait < settings.PLAYER_SCREEN_WAIT_TIME:
             self.manager.screen_update(0)  # Экран должен обновиться после события
-            time.sleep(0.3)
+            # time.sleep(0.01)
 
         if screen_id != self.manager.screen_id:
             raise ScreenMismatchError(
                 f"Текущий экран ({self.manager.screen_id}) не соответствует требуемому ({screen_id})"
             )
+
+        # Если экран получен, обновляем еще раз, с задержкой, чтобы дать возможность ему прогрузиться
+        self.manager.screen_update(settings.PLAYER_SCREEN_WAIT_LOAD)
 
     def play_one(self, command: str) -> None:
         """
@@ -193,7 +196,6 @@ class Player:
             self.wait_screen(screen_id)  # Ожидаем переход к нужному экрану
             self._execute_kbd_command(command_action, command)
 
-            self.manager.screen_update(0)  # Экран должен обновиться после события
             return
         
         # Обработка команд мыши    
@@ -225,7 +227,6 @@ class Player:
             # Выполняем команду мыши
             self._execute_mouse_command(command_action, command, metadata)
 
-            self.manager.screen_update(0)  # Экран должен обновиться после события
             return
         
         # Если мы дошли до сюда, значит команда неизвестного типа
@@ -388,8 +389,6 @@ class Player:
         # Выполняем команды последовательно
         for i, command in enumerate(commands):
             try:
-                print(f"Выполнение команды {i+1}: {command}")
-                
                 # Пауза между командами для стабильности работы
                 if i > 0:
                     time.sleep(settings.PLAYER_COMMAND_DELAY)
@@ -397,10 +396,7 @@ class Player:
                 # Проверка структуры команды, чтобы избежать ошибок при разборе
                 if '_' not in command:
                     raise InvalidCommandError(f"Некорректный формат команды: {command}")
-                    
-                # Получение типа команды для логирования
-                command_type = command.split('_')[0]
-                
+
                 # Выполнение команды
                 self.play_one(command)
                 
