@@ -244,8 +244,8 @@ class InputTracker:
                     sample_id = set_sample(self.manager, x, y)
 
                     command = f"mouse_click_{button_type}_{sample_id}"
-
-                    print(f"Клик мыши ({button_type}) по координатам {self.pending_click_position}: {command}")
+                    self.commands.append(command)
+                    # print(f"Клик мыши ({button_type}) по координатам {self.pending_click_position}: {command}")
                     self.pending_click = False
 
                     self.manager.screen_update()  # Экран должен обновиться после события
