@@ -157,9 +157,9 @@ class Manager:
         """
         logger.info("Остановка Manager...")
 
-        """Останавливает таймер и завершает работу менеджера."""
-        if self.timer and self.timer.is_alive():
-            self.timer.cancel()
+        # """Останавливает таймер и завершает работу менеджера."""
+        # if self.timer and self.timer.is_alive():
+        #     self.timer.cancel()
 
         # Останавливаем сервер ChromaDB
         try:
