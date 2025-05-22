@@ -218,9 +218,13 @@ class InputTracker:
                     # Прошло достаточно времени после нажатия ESC, и не было второго нажатия
                     # Регистрируем одиночный ESC
                     command = f"kbd_click_(esc)_{self.manager.screen_id}"
+                    self.manager.add_command(command)  # Обновляем данные о событии в менеджере
                     self.commands.append(command)
 
-                    print(f"Нажатие клавиши: {command}")
+                    # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
+                    self.manager.report()
+
+                    # print(f"Нажатие клавиши: {command}")
                     self.pending_esc = False
                 
                 # Обработка отложенного клика мыши в основном цикле
@@ -240,7 +244,7 @@ class InputTracker:
                     sample_id = set_sample(self.manager, x, y)
 
                     command = f"mouse_click_{button_type}_{sample_id}"
-                    self.commands.append(command)
+
                     print(f"Клик мыши ({button_type}) по координатам {self.pending_click_position}: {command}")
                     self.pending_click = False
 
@@ -405,8 +409,13 @@ class InputTracker:
                         # Формируем команду
                         combo_str = " ".join(combo_keys_names).strip()
                         command = f"kbd_combo_({combo_str})_{self.manager.screen_id}"
+                        self.manager.add_command(command)  # Обновляем данные о событии в менеджере
                         self.commands.append(command)
-                        print(f"Комбинация клавиш: {command}")
+
+                        # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
+                        self.manager.report()
+
+                        # print(f"Комбинация клавиш: {command}")
                         
                         # Помечаем все клавиши комбинации как обработанные, кроме текущей
                         self.processed_combo_keys = self.combo_keys.copy()
@@ -421,8 +430,13 @@ class InputTracker:
                             key_name = self.get_key_name(key)
                             if key_name and key_name.strip():
                                 command = f"kbd_click_({key_name})_{self.manager.screen_id}"
+                                self.manager.add_command(command)  # Обновляем данные о событии в менеджере
                                 self.commands.append(command)
-                                print(f"Нажатие клавиши: {command}")
+
+                                # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
+                                self.manager.report()
+
+                                # print(f"Нажатие клавиши: {command}")
                 else:
                     # Если в комбинации осталась только одна клавиша, обрабатываем как одиночное нажатие
                     if not (key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r,
@@ -432,8 +446,13 @@ class InputTracker:
                         key_name = self.get_key_name(key)
                         if key_name and key_name.strip():
                             command = f"kbd_click_({key_name})_{self.manager.screen_id}"
+                            self.manager.add_command(command)  # Обновляем данные о событии в менеджере
                             self.commands.append(command)
-                            print(f"Нажатие клавиши: {command}")
+
+                            # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
+                            self.manager.report()
+
+                            # print(f"Нажатие клавиши: {command}")
                 
                 # Обновляем состояние модификаторов ПОСЛЕ обработки комбинации
                 if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
@@ -458,8 +477,12 @@ class InputTracker:
                     # Проверяем, что имя клавиши не пустое
                     if key_name and key_name.strip():
                         command = f"kbd_click_({key_name})_{self.manager.screen_id}"
+                        self.manager.add_command(command)  # Обновляем данные о событии в менеджере
                         self.commands.append(command)
-                        print(f"Нажатие клавиши: {command}")
+
+                        self.manager.report()  # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
+
+                        # print(f"Нажатие клавиши: {command}")
                 
                 # Обновляем состояние модификаторов
                 if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):

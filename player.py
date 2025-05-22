@@ -209,6 +209,7 @@ class Player:
 
             self.wait_screen(screen_id)  # Ожидаем переход к нужному экрану
             self._execute_kbd_command(command_action, command)
+            self.manager.report()  # ДЛЯ ОТЛАДКИ. Выводим команду, сохраняем скриншот
 
             return
         
