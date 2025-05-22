@@ -130,18 +130,21 @@ class Manager:
         # Получаем dHash выбранного участка виде вектора
         embedding = [float(bit) for bit in compute_dhash_vector(screen_area)]
 
-        # Проверяем наличие screen_id по вектору
-        screen_id = chroma.get_screen_id(embedding)
+        try:
+            # Проверяем наличие screen_id по вектору
+            screen_id = chroma.get_screen_id(embedding)
 
-        # Если screen_id не найден, создаем новый
-        if screen_id is None:
-            screen_id = settings.generate_unique_id()
-            chroma.create_screen(screen_id, embedding)
+            # Если screen_id не найден, создаем новый
+            if screen_id is None:
+                screen_id = settings.generate_unique_id()
+                chroma.create_screen(screen_id, embedding)
 
-        self.blocked = False  # Разрешаем чтение данных
+            self.blocked = False  # Разрешаем чтение данных
 
-        # Сохраняем screen_id в Manager и возвращаем его
-        self.screen_id = screen_id
+            # Сохраняем screen_id в Manager и возвращаем его
+            self.screen_id = screen_id
+        except:
+            screen_id = ''  # Не обрабатываем ошибки в потоке
 
         return screen_id
 
